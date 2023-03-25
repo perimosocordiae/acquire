@@ -6,6 +6,7 @@ fn main() {
     let mut game = GameState::new(4, &mut rng);
     game.place_tile(0, 6);
     game.buy_stock([0; MAX_NUM_CHAINS]);
+    print!("{}", game);
     println!("Player value: {}", game.player_value(0));
 }
 
@@ -33,11 +34,38 @@ fn chain_name(chain_index: usize) -> &'static str {
 // Contains (row, col) indices.
 #[derive(Clone, Copy)]
 struct Tile(usize, usize);
+impl std::fmt::Display for Tile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let row = (b'A' + self.0 as u8) as char;
+        write!(f, "{}-{}", row, self.0 + 1)
+    }
+}
 
 struct Player {
     cash: usize,
     stocks: [usize; MAX_NUM_CHAINS],
     tiles: Vec<Tile>,
+}
+impl std::fmt::Display for Player {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Cash: ${}, Stocks: [", self.cash)?;
+        self.stocks
+            .iter()
+            .enumerate()
+            .filter(|(_, &num_stocks)| num_stocks > 0)
+            .map(|(i, &num_stocks)| format!("{}: {}", chain_name(i), num_stocks))
+            .collect::<Vec<String>>()
+            .join(", ")
+            .fmt(f)?;
+        write!(f, "], Tiles: [")?;
+        self.tiles
+            .iter()
+            .map(|t| format!("{}", t))
+            .collect::<Vec<String>>()
+            .join(", ")
+            .fmt(f)?;
+        write!(f, "]")
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -47,6 +75,7 @@ enum GridCell {
     Chain(usize),
 }
 
+#[derive(Debug)]
 struct TurnState {
     player: usize,
     did_place: bool,
@@ -59,6 +88,15 @@ struct GameState {
     unclaimed_tiles: Vec<Tile>,
     chain_sizes: [usize; MAX_NUM_CHAINS],
     stock_market: [usize; MAX_NUM_CHAINS],
+}
+impl std::fmt::Display for GameState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, p) in self.players.iter().enumerate() {
+            writeln!(f, "Player {}: {}", i, p)?;
+        }
+        writeln!(f, "Turn state: {:?}", self.turn_state)
+        // TODO: Display the grid, with one character per cell.
+    }
 }
 impl GameState {
     fn new(num_players: usize, rng: &mut impl rand::Rng) -> Self {
