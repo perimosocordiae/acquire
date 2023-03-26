@@ -1,13 +1,11 @@
 use rand::seq::SliceRandom;
 
 fn main() {
-    println!("Hello, Acquire!");
     let mut rng = rand::thread_rng();
     let mut game = GameState::new(4, &mut rng);
     game.place_tile(0, 6);
     game.buy_stock([0; MAX_NUM_CHAINS]);
     print!("{}", game);
-    println!("Player value: {}", game.player_value(0));
 }
 
 // Grid cells named from 1-A to 12-I.
@@ -17,7 +15,6 @@ const MAX_NUM_CHAINS: usize = 7;
 const STOCKS_PER_CHAIN: usize = 25;
 const BUY_LIMIT: usize = 3;
 
-#[allow(dead_code)]
 fn chain_name(chain_index: usize) -> &'static str {
     match chain_index {
         0 => "Tower",
@@ -92,10 +89,23 @@ struct GameState {
 impl std::fmt::Display for GameState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, p) in self.players.iter().enumerate() {
-            writeln!(f, "Player {}: {}", i, p)?;
+            writeln!(f, "Player {}: value = ${}", i, self.player_value(i))?;
+            writeln!(f, "  {}", p)?;
         }
-        writeln!(f, "Turn state: {:?}", self.turn_state)
-        // TODO: Display the grid, with one character per cell.
+        writeln!(f, "{} unclaimed tiles", self.unclaimed_tiles.len())?;
+        for row in self.grid.iter() {
+            for cell in row.iter() {
+                match cell {
+                    GridCell::Empty => write!(f, ".")?,
+                    GridCell::Hotel => write!(f, "0")?,
+                    GridCell::Chain(i) => write!(f, "{}", chain_name(*i).chars().next().unwrap())?,
+                }
+            }
+            writeln!(f)?;
+        }
+        writeln!(f, "Stock market: {:?}", self.stock_market)?;
+        writeln!(f, "Chain sizes: {:?}", self.chain_sizes)?;
+        writeln!(f, "{:?}", self.turn_state)
     }
 }
 impl GameState {
