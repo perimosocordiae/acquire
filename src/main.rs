@@ -1,11 +1,36 @@
 use rand::seq::SliceRandom;
+use std::error::Error;
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let mut rng = rand::thread_rng();
     let mut game = GameState::new(4, &mut rng);
-    game.place_tile(0, 6);
-    game.buy_stock([0; MAX_NUM_CHAINS]);
-    print!("{}", game);
+
+    // Super-janky CLI for testing.
+    let mut input = String::new();
+    loop {
+        print!("{}", game);
+        println!("Choose a tile (index) to play, or 99 to quit:");
+        std::io::stdin().read_line(&mut input)?;
+        let tile_idx = input.trim().parse::<usize>()?;
+        input.clear();
+        if tile_idx == 99 {
+            break;
+        }
+        game.place_tile(tile_idx, 0);
+
+        print!("{}", game);
+        println!("Choose a chain (index) to buy stock in, or 99 to quit:");
+        std::io::stdin().read_line(&mut input)?;
+        let buy_idx = input.trim().parse::<usize>()?;
+        input.clear();
+        if buy_idx == 99 {
+            break;
+        }
+        let mut buy_order = [0; MAX_NUM_CHAINS];
+        buy_order[buy_idx] = 1;
+        game.buy_stock(buy_order);
+    }
+    Ok(())
 }
 
 // Grid cells named from 1-A to 12-I.
