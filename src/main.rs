@@ -34,7 +34,8 @@ struct Tile(usize, usize);
 impl std::fmt::Display for Tile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let row = (b'A' + self.0 as u8) as char;
-        write!(f, "{}-{}", row, self.0 + 1)
+        let col = 1 + self.1;
+        write!(f, "{}-{}", row, col)
     }
 }
 
