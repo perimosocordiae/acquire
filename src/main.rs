@@ -90,7 +90,7 @@ impl std::fmt::Debug for Tile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let row = (b'A' + self.0 as u8) as char;
         let col = 1 + self.1;
-        write!(f, "{}-{}", row, col)
+        write!(f, "{}-{}", col, row)
     }
 }
 
@@ -163,11 +163,16 @@ impl std::fmt::Display for GameState {
             writeln!(f, "  {}", p)?;
         }
         writeln!(f, "{} unclaimed tiles", self.unclaimed_tiles.len())?;
-        for row in self.grid.iter() {
+        for col in 0..=GRID_WIDTH {
+            write!(f, "{}", col % 10)?;
+        }
+        writeln!(f)?;
+        for (i, row) in self.grid.iter().enumerate() {
+            write!(f, "{}", (b'A' + i as u8) as char)?;
             for cell in row.iter() {
                 match cell {
-                    GridCell::Empty => write!(f, ".")?,
-                    GridCell::Hotel => write!(f, "0")?,
+                    GridCell::Empty => write!(f, "_")?,
+                    GridCell::Hotel => write!(f, "*")?,
                     GridCell::Chain(i) => write!(f, "{}", chain_name(*i).chars().next().unwrap())?,
                 }
             }
