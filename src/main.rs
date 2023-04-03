@@ -9,26 +9,56 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut input = String::new();
     loop {
         print!("{}", game);
-        println!("Choose a tile (index) to play, or 99 to quit:");
+        match &game.turn_state.phase {
+            TurnPhase::PlaceTile(_) => {
+                println!("Choose a tile (index) to play, or 'q' to quit:");
+            }
+            TurnPhase::CreateChain(_, _) => {
+                println!("Choose a chain (index) to create, or 'q' to quit:");
+            }
+            TurnPhase::MergeChains => {
+                println!("TODO merge, or 'q' to quit:");
+            }
+            TurnPhase::SellStock => {
+                println!("Choose how much stock to sell, or 'q' to quit:");
+            }
+            TurnPhase::BuyStock(_) => {
+                println!("Choose up to 3 stocks (comma-sep indices), or 'q' to quit:");
+            }
+        }
         std::io::stdin().read_line(&mut input)?;
-        let tile_idx = input.trim().parse::<usize>()?;
-        input.clear();
-        if tile_idx == 99 {
+        if input.trim() == "q" {
             break;
         }
-        game.place_tile(tile_idx, 0);
-
-        print!("{}", game);
-        println!("Choose a chain (index) to buy stock in, or 99 to quit:");
-        std::io::stdin().read_line(&mut input)?;
-        let buy_idx = input.trim().parse::<usize>()?;
-        input.clear();
-        if buy_idx == 99 {
-            break;
+        match &game.turn_state.phase {
+            TurnPhase::PlaceTile(_) => {
+                let tile_idx = input.trim().parse::<usize>()?;
+                game.place_tile(tile_idx);
+            }
+            TurnPhase::CreateChain(_, _) => {
+                let chain_idx = input.trim().parse::<usize>()?;
+                game.create_chain(chain_idx);
+            }
+            TurnPhase::MergeChains => {
+                game.merge_chains();
+            }
+            TurnPhase::SellStock => {
+                let amount = input.trim().parse::<usize>()?;
+                game.sell_stock(amount);
+            }
+            TurnPhase::BuyStock(_) => {
+                let mut buy_order = [0; MAX_NUM_CHAINS];
+                for s in input.trim().split(',') {
+                    if s.is_empty() {
+                        continue;
+                    }
+                    let idx = s.parse::<usize>()?;
+                    buy_order[idx] += 1;
+                }
+                game.buy_stock(buy_order);
+            }
         }
-        let mut buy_order = [0; MAX_NUM_CHAINS];
-        buy_order[buy_idx] = 1;
-        game.buy_stock(buy_order);
+        input.clear();
     }
     Ok(())
 }
@@ -56,7 +86,7 @@ fn chain_name(chain_index: usize) -> &'static str {
 // Contains (row, col) indices.
 #[derive(Clone, Copy)]
 struct Tile(usize, usize);
-impl std::fmt::Display for Tile {
+impl std::fmt::Debug for Tile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let row = (b'A' + self.0 as u8) as char;
         let col = 1 + self.1;
@@ -83,7 +113,7 @@ impl std::fmt::Display for Player {
         write!(f, "], Tiles: [")?;
         self.tiles
             .iter()
-            .map(|t| format!("{}", t))
+            .map(|t| format!("{:?}", t))
             .collect::<Vec<String>>()
             .join(", ")
             .fmt(f)?;
@@ -99,9 +129,23 @@ enum GridCell {
 }
 
 #[derive(Debug)]
+enum TurnPhase {
+    // Player has not yet placed a tile. Payload: playable tile indices.
+    PlaceTile(Vec<usize>),
+    // Player's tile is creating a new chain. Payload: (tile, available chains).
+    CreateChain(Tile, Vec<usize>),
+    // Player's tile is merging with an existing chain.
+    MergeChains,
+    // Post-merger stock disposal.
+    SellStock,
+    // Buy phase. Payload indicates the number of buyable stocks per chain.
+    BuyStock([usize; MAX_NUM_CHAINS]),
+}
+
+#[derive(Debug)]
 struct TurnState {
     player: usize,
-    did_place: bool,
+    phase: TurnPhase,
 }
 
 struct GameState {
@@ -150,7 +194,7 @@ impl GameState {
             .collect();
         let turn_state = TurnState {
             player: rng.gen_range(0..num_players),
-            did_place: false,
+            phase: TurnPhase::PlaceTile((0..6).collect()),
         };
         for t in unclaimed_tiles.drain(unclaimed_tiles.len() - num_players..) {
             grid[t.0][t.1] = GridCell::Hotel;
@@ -163,6 +207,15 @@ impl GameState {
             chain_sizes: [0; MAX_NUM_CHAINS],
             stock_market: [STOCKS_PER_CHAIN; MAX_NUM_CHAINS],
         }
+    }
+    fn available_stocks(&self) -> [usize; MAX_NUM_CHAINS] {
+        let mut available_stocks = [0; MAX_NUM_CHAINS];
+        for (i, &num_stocks) in self.stock_market.iter().enumerate() {
+            if num_stocks > 0 && self.chain_sizes[i] > 1 {
+                available_stocks[i] = num_stocks;
+            }
+        }
+        available_stocks
     }
     fn stock_price(&self, chain_index: usize) -> usize {
         let chain_size = self.chain_sizes[chain_index];
@@ -216,18 +269,29 @@ impl GameState {
         }
         neighbors
     }
-    fn place_tile(&mut self, idx: usize, chain_index: usize) {
-        assert!(!self.turn_state.did_place);
+    fn is_tile_playable(&self, _tile: Tile) -> bool {
+        // TODO: Implement this.
+        true
+    }
+    fn place_tile(&mut self, idx: usize) {
+        assert!(
+            matches!(&self.turn_state.phase, TurnPhase::PlaceTile(valid_indices) if valid_indices.contains(&idx))
+        );
         let tile = self.players[self.turn_state.player].tiles.remove(idx);
         // Check for neighboring chains or hotels.
         let neighbors = self.grid_neighbors(tile);
         if neighbors.is_empty() {
             // Just a single hotel.
             self.grid[tile.0][tile.1] = GridCell::Hotel;
-            self.turn_state.did_place = true;
+            let available_stocks = self.available_stocks();
+            if available_stocks.iter().any(|&x| x > 0) {
+                self.turn_state.phase = TurnPhase::BuyStock(available_stocks);
+            } else {
+                self.next_player();
+            }
             return;
         }
-        // Making a chain.
+        // Find neighboring tiles that are part of a chain.
         let candidates = neighbors
             .iter()
             .filter_map(|(_, cell)| match cell {
@@ -235,9 +299,39 @@ impl GameState {
                 _ => None,
             })
             .collect::<Vec<usize>>();
-        if candidates.is_empty() {
-            // Brand new chain.
+        match candidates.len() {
+            // New chain.
+            0 => {
+                let available_chains = self
+                    .chain_sizes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &size)| size == 0)
+                    .map(|(i, _)| i)
+                    .collect::<Vec<usize>>();
+                self.turn_state.phase = TurnPhase::CreateChain(tile, available_chains);
+            }
+            // Joining an existing chain.
+            1 => {
+                let chain_index = candidates[0];
+                self.chain_sizes[chain_index] += neighbors.len();
+                self.grid[tile.0][tile.1] = GridCell::Chain(chain_index);
+                for (t, _) in neighbors {
+                    self.grid[t.0][t.1] = GridCell::Chain(chain_index);
+                }
+                self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
+            }
+            // Merging 2+ chains.
+            _ => {
+                self.turn_state.phase = TurnPhase::MergeChains;
+            }
+        }
+    }
+    fn create_chain(&mut self, chain_index: usize) {
+        if let TurnPhase::CreateChain(tile, valid_indices) = &self.turn_state.phase {
+            assert!(valid_indices.contains(&chain_index));
             assert_eq!(self.chain_sizes[chain_index], 0);
+            let neighbors = self.grid_neighbors(*tile);
             self.chain_sizes[chain_index] = 1 + neighbors.len();
             // TODO: It's rare but possible that these neighbors also have
             // un-chained neighbors (due to the random initialization).
@@ -251,22 +345,22 @@ impl GameState {
                 self.stock_market[chain_index] -= 1;
                 self.players[self.turn_state.player].stocks[chain_index] += 1;
             }
-        } else if candidates.len() == 1 {
-            // Adding to an existing chain.
-            let chain_index = candidates[0];
-            self.chain_sizes[chain_index] += neighbors.len();
-            self.grid[tile.0][tile.1] = GridCell::Chain(chain_index);
-            for (t, _) in neighbors {
-                self.grid[t.0][t.1] = GridCell::Chain(chain_index);
-            }
+            self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
         } else {
-            // Merging chains.
-            todo!("Merging chains is not implemented yet.");
+            panic!("Invalid turn phase: {:?}", self.turn_state.phase);
         }
-        self.turn_state.did_place = true;
+    }
+    fn merge_chains(&mut self) {
+        assert!(matches!(self.turn_state.phase, TurnPhase::MergeChains));
+        self.turn_state.phase = TurnPhase::SellStock;
+        todo!("Merging chains is not implemented yet.");
+    }
+    fn sell_stock(&mut self, _amount: usize) {
+        assert!(matches!(self.turn_state.phase, TurnPhase::SellStock));
+        todo!("Selling stocks is not implemented yet.");
     }
     fn buy_stock(&mut self, buy_order: [usize; MAX_NUM_CHAINS]) {
-        assert!(self.turn_state.did_place);
+        assert!(matches!(self.turn_state.phase, TurnPhase::BuyStock(_)));
         assert!(buy_order.iter().sum::<usize>() <= BUY_LIMIT);
         let mut cash_spent = 0;
         for (chain_index, num_stocks) in buy_order.iter().enumerate() {
@@ -284,7 +378,10 @@ impl GameState {
             player.stocks[chain_index] += num_stocks;
             self.stock_market[chain_index] -= num_stocks;
         }
-
+        self.next_player();
+    }
+    fn next_player(&mut self) {
+        let player = &mut self.players[self.turn_state.player];
         // Draw a new tile.
         if let Some(tile) = self.unclaimed_tiles.pop() {
             player.tiles.push(tile);
@@ -301,7 +398,14 @@ impl GameState {
         }
 
         // Advance to the next player's turn.
-        self.turn_state.did_place = false;
         self.turn_state.player = (self.turn_state.player + 1) % self.players.len();
+        let playable_tiles = self.players[self.turn_state.player]
+            .tiles
+            .iter()
+            .enumerate()
+            .filter(|(_, &tile)| self.is_tile_playable(tile))
+            .map(|(i, _)| i)
+            .collect::<Vec<usize>>();
+        self.turn_state.phase = TurnPhase::PlaceTile(playable_tiles);
     }
 }
