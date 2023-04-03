@@ -1,7 +1,7 @@
 use rand::seq::SliceRandom;
 use std::error::Error;
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() {
     let mut rng = rand::thread_rng();
     let mut game = GameState::new(4, &mut rng);
 
@@ -9,58 +9,70 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut input = String::new();
     loop {
         print!("{}", game);
-        match &game.turn_state.phase {
-            TurnPhase::PlaceTile(_) => {
-                println!("Choose a tile (index) to play, or 'q' to quit:");
+        match game_loop(&mut game, &mut input) {
+            Ok(true) => {}
+            Ok(false) => {
+                break;
             }
-            TurnPhase::CreateChain(_, _) => {
-                println!("Choose a chain (index) to create, or 'q' to quit:");
-            }
-            TurnPhase::MergeChains => {
-                println!("TODO merge, or 'q' to quit:");
-            }
-            TurnPhase::SellStock => {
-                println!("Choose how much stock to sell, or 'q' to quit:");
-            }
-            TurnPhase::BuyStock(_) => {
-                println!("Choose up to 3 stocks (comma-sep indices), or 'q' to quit:");
-            }
-        }
-        std::io::stdin().read_line(&mut input)?;
-        if input.trim() == "q" {
-            break;
-        }
-        match &game.turn_state.phase {
-            TurnPhase::PlaceTile(_) => {
-                let tile_idx = input.trim().parse::<usize>()?;
-                game.place_tile(tile_idx);
-            }
-            TurnPhase::CreateChain(_, _) => {
-                let chain_idx = input.trim().parse::<usize>()?;
-                game.create_chain(chain_idx);
-            }
-            TurnPhase::MergeChains => {
-                game.merge_chains();
-            }
-            TurnPhase::SellStock => {
-                let amount = input.trim().parse::<usize>()?;
-                game.sell_stock(amount);
-            }
-            TurnPhase::BuyStock(_) => {
-                let mut buy_order = [0; MAX_NUM_CHAINS];
-                for s in input.trim().split(',') {
-                    if s.is_empty() {
-                        continue;
-                    }
-                    let idx = s.parse::<usize>()?;
-                    buy_order[idx] += 1;
-                }
-                game.buy_stock(buy_order);
+            Err(e) => {
+                println!("Error: {}", e);
             }
         }
         input.clear();
     }
-    Ok(())
+}
+
+fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn Error>> {
+    match &game.turn_state.phase {
+        TurnPhase::PlaceTile(_) => {
+            println!("Choose a tile (index) to play, or 'q' to quit:");
+        }
+        TurnPhase::CreateChain(_, _) => {
+            println!("Choose a chain (index) to create, or 'q' to quit:");
+        }
+        TurnPhase::MergeChains => {
+            println!("TODO merge, or 'q' to quit:");
+        }
+        TurnPhase::SellStock => {
+            println!("Choose how much stock to sell, or 'q' to quit:");
+        }
+        TurnPhase::BuyStock(_) => {
+            println!("Choose up to 3 stocks (comma-sep indices), or 'q' to quit:");
+        }
+    }
+    std::io::stdin().read_line(input)?;
+    if input.trim() == "q" {
+        return Ok(false);
+    }
+    match &game.turn_state.phase {
+        TurnPhase::PlaceTile(_) => {
+            let tile_idx = input.trim().parse::<usize>()?;
+            game.place_tile(tile_idx)?;
+        }
+        TurnPhase::CreateChain(_, _) => {
+            let chain_idx = input.trim().parse::<usize>()?;
+            game.create_chain(chain_idx)?;
+        }
+        TurnPhase::MergeChains => {
+            game.merge_chains()?;
+        }
+        TurnPhase::SellStock => {
+            let amount = input.trim().parse::<usize>()?;
+            game.sell_stock(amount)?;
+        }
+        TurnPhase::BuyStock(_) => {
+            let mut buy_order = [0; MAX_NUM_CHAINS];
+            for s in input.trim().split(',') {
+                if s.is_empty() {
+                    continue;
+                }
+                let idx = s.parse::<usize>()?;
+                buy_order[idx] += 1;
+            }
+            game.buy_stock(buy_order)?;
+        }
+    }
+    Ok(true)
 }
 
 // Grid cells named from 1-A to 12-I.
@@ -278,10 +290,14 @@ impl GameState {
         // TODO: Implement this.
         true
     }
-    fn place_tile(&mut self, idx: usize) {
-        assert!(
-            matches!(&self.turn_state.phase, TurnPhase::PlaceTile(valid_indices) if valid_indices.contains(&idx))
-        );
+    fn place_tile(&mut self, idx: usize) -> Result<(), String> {
+        if let TurnPhase::PlaceTile(valid_indices) = &self.turn_state.phase {
+            if !valid_indices.contains(&idx) {
+                return Err(format!("Invalid tile index: {}", idx));
+            }
+        } else {
+            return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
+        }
         let tile = self.players[self.turn_state.player].tiles.remove(idx);
         // Check for neighboring chains or hotels.
         let neighbors = self.grid_neighbors(tile);
@@ -294,7 +310,7 @@ impl GameState {
             } else {
                 self.next_player();
             }
-            return;
+            return Ok(());
         }
         // Find neighboring tiles that are part of a chain.
         let candidates = neighbors
@@ -331,11 +347,16 @@ impl GameState {
                 self.turn_state.phase = TurnPhase::MergeChains;
             }
         }
+        Ok(())
     }
-    fn create_chain(&mut self, chain_index: usize) {
+    fn create_chain(&mut self, chain_index: usize) -> Result<(), String> {
         if let TurnPhase::CreateChain(tile, valid_indices) = &self.turn_state.phase {
-            assert!(valid_indices.contains(&chain_index));
-            assert_eq!(self.chain_sizes[chain_index], 0);
+            if !valid_indices.contains(&chain_index) {
+                return Err(format!("Invalid chain index: {}", chain_index));
+            }
+            if self.chain_sizes[chain_index] != 0 {
+                return Err(format!("Chain {} already exists", chain_index));
+            }
             let neighbors = self.grid_neighbors(*tile);
             self.chain_sizes[chain_index] = 1 + neighbors.len();
             // TODO: It's rare but possible that these neighbors also have
@@ -351,39 +372,66 @@ impl GameState {
                 self.players[self.turn_state.player].stocks[chain_index] += 1;
             }
             self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
+            Ok(())
         } else {
-            panic!("Invalid turn phase: {:?}", self.turn_state.phase);
+            Err(format!("Wrong phase: {:?}", self.turn_state.phase))
         }
     }
-    fn merge_chains(&mut self) {
-        assert!(matches!(self.turn_state.phase, TurnPhase::MergeChains));
+    fn merge_chains(&mut self) -> Result<(), String> {
+        if let TurnPhase::MergeChains = &self.turn_state.phase {
+        } else {
+            return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
+        }
         self.turn_state.phase = TurnPhase::SellStock;
         todo!("Merging chains is not implemented yet.");
     }
-    fn sell_stock(&mut self, _amount: usize) {
-        assert!(matches!(self.turn_state.phase, TurnPhase::SellStock));
+    fn sell_stock(&mut self, _amount: usize) -> Result<(), String> {
+        if let TurnPhase::SellStock = &self.turn_state.phase {
+        } else {
+            return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
+        }
+        self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
         todo!("Selling stocks is not implemented yet.");
     }
-    fn buy_stock(&mut self, buy_order: [usize; MAX_NUM_CHAINS]) {
-        assert!(matches!(self.turn_state.phase, TurnPhase::BuyStock(_)));
-        assert!(buy_order.iter().sum::<usize>() <= BUY_LIMIT);
-        let mut cash_spent = 0;
-        for (chain_index, num_stocks) in buy_order.iter().enumerate() {
-            if *num_stocks == 0 {
-                continue;
+    fn buy_stock(&mut self, buy_order: [usize; MAX_NUM_CHAINS]) -> Result<(), String> {
+        if let TurnPhase::BuyStock(available) = &self.turn_state.phase {
+            if buy_order.iter().sum::<usize>() > BUY_LIMIT {
+                return Err(format!(
+                    "Too many stocks bought: {}",
+                    buy_order.iter().sum::<usize>()
+                ));
             }
-            assert!(self.stock_market[chain_index] >= *num_stocks);
-            let price = self.stock_price(chain_index);
-            cash_spent += price * num_stocks;
+            for (chain_index, &num_stocks) in buy_order.iter().enumerate() {
+                if available[chain_index] < num_stocks {
+                    return Err(format!(
+                        "Not enough stocks available for chain {}: {} < {}",
+                        chain_index, available[chain_index], num_stocks
+                    ));
+                }
+            }
+        } else {
+            return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
+        }
+        let mut cash_spent = 0;
+        for (chain_index, &num_stocks) in buy_order.iter().enumerate() {
+            if num_stocks > 0 {
+                cash_spent += self.stock_price(chain_index) * num_stocks;
+            }
         }
         let player = &mut self.players[self.turn_state.player];
-        assert!(cash_spent <= player.cash);
+        if cash_spent > player.cash {
+            return Err(format!(
+                "Not enough cash to buy stocks. Price: ${} > Cash: ${}",
+                cash_spent, player.cash
+            ));
+        }
         player.cash -= cash_spent;
         for (chain_index, num_stocks) in buy_order.iter().enumerate() {
             player.stocks[chain_index] += num_stocks;
             self.stock_market[chain_index] -= num_stocks;
         }
         self.next_player();
+        Ok(())
     }
     fn next_player(&mut self) {
         let player = &mut self.players[self.turn_state.player];
