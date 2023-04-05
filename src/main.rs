@@ -39,6 +39,10 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
         TurnPhase::BuyStock(_) => {
             println!("Choose up to 3 stocks (comma-sep indices), or 'q' to quit:");
         }
+        TurnPhase::GameOver(final_values) => {
+            println!("Game over! Final values: {:?}", final_values);
+            return Ok(false);
+        }
     }
     std::io::stdin().read_line(input)?;
     if input.trim() == "q" {
@@ -70,6 +74,9 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
                 buy_order[idx] += 1;
             }
             game.buy_stock(buy_order)?;
+        }
+        TurnPhase::GameOver(_) => {
+            panic!("Game is over, this should be unreachable");
         }
     }
     Ok(true)
@@ -153,6 +160,8 @@ enum TurnPhase {
     SellStock,
     // Buy phase. Payload indicates the number of buyable stocks per chain.
     BuyStock([usize; MAX_NUM_CHAINS]),
+    // Game over. Payload indicates each player's final value.
+    GameOver(Vec<usize>),
 }
 
 #[derive(Debug)]
@@ -493,7 +502,12 @@ impl GameState {
                     .iter()
                     .all(|&size| size >= SAFE_CHAIN_SIZE || size == 0))
         {
-            todo!("Game over is not implemented yet.");
+            // TODO: Sell off all remaining stock for each player.
+            let final_values = (0..self.players.len())
+                .into_iter()
+                .map(|i| self.player_value(i))
+                .collect();
+            self.turn_state.phase = TurnPhase::GameOver(final_values);
         }
 
         // Advance to the next player's turn.
