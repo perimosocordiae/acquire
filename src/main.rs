@@ -361,13 +361,15 @@ impl GameState {
             return Ok(());
         }
         // Find neighboring tiles that are part of a chain.
-        let candidates = neighbors
+        let mut candidates = neighbors
             .iter()
             .filter_map(|(_, cell)| match cell {
                 GridCell::Chain(idx) => Some(*idx),
                 _ => None,
             })
             .collect::<Vec<usize>>();
+        candidates.sort_unstable();
+        candidates.dedup();
         match candidates.len() {
             // New chain.
             0 => {
