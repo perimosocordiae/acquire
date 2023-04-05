@@ -161,6 +161,12 @@ struct TurnState {
     phase: TurnPhase,
 }
 
+enum TilePlayability {
+    Playable,
+    TemporarilyUnplayable,
+    PermanentlyUnplayable,
+}
+
 struct GameState {
     players: Vec<Player>,
     turn_state: TurnState,
@@ -287,8 +293,13 @@ impl GameState {
         }
         neighbors
     }
-    fn is_tile_playable(&self, tile: Tile) -> bool {
-        // A tile cannot be played if it would merge two or more safe chains.
+    fn tile_playability(&self, tile: Tile) -> TilePlayability {
+        // A tile cannot be played if it would merge two or more safe chains,
+        // or if it would create an 8th chain.
+        let neighbors = self.grid_neighbors(tile);
+        if neighbors.is_empty() {
+            return TilePlayability::Playable;
+        }
         let mut neighbor_chains = self
             .grid_neighbors(tile)
             .iter()
@@ -297,13 +308,26 @@ impl GameState {
                 _ => None,
             })
             .collect::<Vec<usize>>();
+        // Check for new chain creation.
+        if neighbor_chains.is_empty() {
+            return if self.chain_sizes.iter().any(|&size| size == 0) {
+                TilePlayability::Playable
+            } else {
+                TilePlayability::TemporarilyUnplayable
+            };
+        }
+        // Check for safe neighbor chains.
         neighbor_chains.sort_unstable();
         neighbor_chains.dedup();
-        neighbor_chains
+        let num_safe_neighbors = neighbor_chains
             .into_iter()
             .filter(|&i| self.chain_sizes[i] >= SAFE_CHAIN_SIZE)
-            .count()
-            <= 1
+            .count();
+        if num_safe_neighbors <= 1 {
+            TilePlayability::Playable
+        } else {
+            TilePlayability::PermanentlyUnplayable
+        }
     }
     fn place_tile(&mut self, idx: usize) -> Result<(), String> {
         if let TurnPhase::PlaceTile(valid_indices) = &self.turn_state.phase {
@@ -449,18 +473,25 @@ impl GameState {
         Ok(())
     }
     fn next_player(&mut self) {
-        let player = &mut self.players[self.turn_state.player];
-        // Draw a new tile.
-        if let Some(tile) = self.unclaimed_tiles.pop() {
-            player.tiles.push(tile);
+        // Draw a new tile. If it's permanently unplayable, keep drawing.
+        while let Some(tile) = self.unclaimed_tiles.pop() {
+            match self.tile_playability(tile) {
+                TilePlayability::PermanentlyUnplayable => {}
+                _ => {
+                    self.players[self.turn_state.player].tiles.push(tile);
+                    break;
+                }
+            }
         }
-        // TODO: Check for permanently unplayable tiles and replace them with
-        // unclaimed tiles.
 
         // Check for game over conditions.
         let max_chain_size = *self.chain_sizes.iter().max().unwrap();
         if max_chain_size > 40
-            || (max_chain_size > 10 && self.chain_sizes.iter().all(|&size| size > 10 || size == 0))
+            || (max_chain_size >= SAFE_CHAIN_SIZE
+                && self
+                    .chain_sizes
+                    .iter()
+                    .all(|&size| size >= SAFE_CHAIN_SIZE || size == 0))
         {
             todo!("Game over is not implemented yet.");
         }
@@ -471,8 +502,10 @@ impl GameState {
             .tiles
             .iter()
             .enumerate()
-            .filter(|(_, &tile)| self.is_tile_playable(tile))
-            .map(|(i, _)| i)
+            .filter_map(|(i, &tile)| match self.tile_playability(tile) {
+                TilePlayability::Playable => Some(i),
+                _ => None,
+            })
             .collect::<Vec<usize>>();
         self.turn_state.phase = TurnPhase::PlaceTile(playable_tiles);
     }
