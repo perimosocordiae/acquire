@@ -81,6 +81,7 @@ const GRID_HEIGHT: usize = 9;
 const MAX_NUM_CHAINS: usize = 7;
 const STOCKS_PER_CHAIN: usize = 25;
 const BUY_LIMIT: usize = 3;
+const SAFE_CHAIN_SIZE: usize = 11;
 
 fn chain_name(chain_index: usize) -> &'static str {
     match chain_index {
@@ -286,9 +287,23 @@ impl GameState {
         }
         neighbors
     }
-    fn is_tile_playable(&self, _tile: Tile) -> bool {
-        // TODO: Implement this.
-        true
+    fn is_tile_playable(&self, tile: Tile) -> bool {
+        // A tile cannot be played if it would merge two or more safe chains.
+        let mut neighbor_chains = self
+            .grid_neighbors(tile)
+            .iter()
+            .filter_map(|(_, cell)| match cell {
+                GridCell::Chain(i) => Some(*i),
+                _ => None,
+            })
+            .collect::<Vec<usize>>();
+        neighbor_chains.sort_unstable();
+        neighbor_chains.dedup();
+        neighbor_chains
+            .into_iter()
+            .filter(|&i| self.chain_sizes[i] >= SAFE_CHAIN_SIZE)
+            .count()
+            <= 1
     }
     fn place_tile(&mut self, idx: usize) -> Result<(), String> {
         if let TurnPhase::PlaceTile(valid_indices) = &self.turn_state.phase {
