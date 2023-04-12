@@ -30,8 +30,12 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
         TurnPhase::CreateChain(_, _) => {
             println!("Choose a chain (index) to create, or 'q' to quit:");
         }
-        TurnPhase::MergeChains => {
-            println!("TODO merge, or 'q' to quit:");
+        TurnPhase::MergeChains(choices, _) => {
+            if choices.len() == 1 {
+                println!("Press enter to merge chains, or 'q' to quit:");
+            } else {
+                println!("Choose a chain (index) to win the merger, or 'q' to quit:");
+            }
         }
         TurnPhase::SellStock => {
             println!("Choose how much stock to sell, or 'q' to quit:");
@@ -57,8 +61,13 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
             let chain_idx = input.trim().parse::<usize>()?;
             game.create_chain(chain_idx)?;
         }
-        TurnPhase::MergeChains => {
-            game.merge_chains()?;
+        TurnPhase::MergeChains(choices, _) => {
+            if choices.len() > 1 {
+                let chain_idx = input.trim().parse::<usize>()?;
+                game.merge_chains(chain_idx)?;
+            } else {
+                game.merge_chains(choices[0])?;
+            }
         }
         TurnPhase::SellStock => {
             let amount = input.trim().parse::<usize>()?;
@@ -154,8 +163,9 @@ enum TurnPhase {
     PlaceTile(Vec<usize>),
     // Player's tile is creating a new chain. Payload: (tile, available chains).
     CreateChain(Tile, Vec<usize>),
-    // Player's tile is merging with an existing chain.
-    MergeChains,
+    // 2+ existing chains are merging.
+    // Payload: (choices for the winning chain, all merging chains).
+    MergeChains(Vec<usize>, Vec<usize>),
     // Post-merger stock disposal.
     SellStock,
     // Buy phase. Payload indicates the number of buyable stocks per chain.
@@ -394,7 +404,31 @@ impl GameState {
             }
             // Merging 2+ chains.
             _ => {
-                self.turn_state.phase = TurnPhase::MergeChains;
+                // Only the largest chain can be the winner of the merge.
+                let max_chain_size = candidates
+                    .iter()
+                    .map(|&i| self.chain_sizes[i])
+                    .max()
+                    .unwrap();
+                let winner_choices: Vec<usize> = candidates
+                    .iter()
+                    .filter(|&i| self.chain_sizes[*i] == max_chain_size)
+                    .copied()
+                    .collect();
+                // Note: we're choosing an arbitrary winner here, but the player
+                // will be able to choose the actual winner later. This step is
+                // needed to bring adjacent non-chain hotels into the chain.
+                let winner_cell = GridCell::Chain(winner_choices[0]);
+                self.grid[tile.0][tile.1] = winner_cell;
+                let mut added_to_winner = 1;
+                for (t, c) in neighbors {
+                    if let GridCell::Hotel = c {
+                        self.grid[t.0][t.1] = winner_cell;
+                        added_to_winner += 1;
+                    }
+                }
+                self.chain_sizes[winner_choices[0]] += added_to_winner;
+                self.turn_state.phase = TurnPhase::MergeChains(winner_choices, candidates);
             }
         }
         Ok(())
@@ -427,13 +461,32 @@ impl GameState {
             Err(format!("Wrong phase: {:?}", self.turn_state.phase))
         }
     }
-    fn merge_chains(&mut self) -> Result<(), String> {
-        if let TurnPhase::MergeChains = &self.turn_state.phase {
+    fn merge_chains(&mut self, chain_index: usize) -> Result<(), String> {
+        if let TurnPhase::MergeChains(valid_indices, merging_chains) = &self.turn_state.phase {
+            if !valid_indices.contains(&chain_index) {
+                return Err(format!("Invalid chain index: {}", chain_index));
+            }
+            for row in &mut self.grid {
+                for cell in row {
+                    if let GridCell::Chain(idx) = cell {
+                        if idx != &chain_index && merging_chains.contains(idx) {
+                            *cell = GridCell::Chain(chain_index);
+                        }
+                    }
+                }
+            }
+            for &i in merging_chains {
+                if i != chain_index {
+                    self.chain_sizes[chain_index] += self.chain_sizes[i];
+                    self.chain_sizes[i] = 0;
+                }
+            }
+            // TODO: Prepare a payload for the SellStock phase.
+            self.turn_state.phase = TurnPhase::SellStock;
+            Ok(())
         } else {
             return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
         }
-        self.turn_state.phase = TurnPhase::SellStock;
-        todo!("Merging chains is not implemented yet.");
     }
     fn sell_stock(&mut self, _amount: usize) -> Result<(), String> {
         if let TurnPhase::SellStock = &self.turn_state.phase {
