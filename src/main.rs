@@ -37,8 +37,8 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
                 println!("Choose a chain (index) to win the merger, or 'q' to quit:");
             }
         }
-        TurnPhase::SellStock => {
-            println!("Choose how much stock to sell, or 'q' to quit:");
+        TurnPhase::SellStock(idx) => {
+            println!("Player {idx}: Choose how much stock to sell, or 'q' to quit:");
         }
         TurnPhase::BuyStock(_) => {
             println!("Choose up to 3 stocks (comma-sep indices), or 'q' to quit:");
@@ -69,7 +69,7 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
                 game.merge_chains(choices[0])?;
             }
         }
-        TurnPhase::SellStock => {
+        TurnPhase::SellStock(_) => {
             let amount = input.trim().parse::<usize>()?;
             game.sell_stock(amount)?;
         }
@@ -98,6 +98,7 @@ const MAX_NUM_CHAINS: usize = 7;
 const STOCKS_PER_CHAIN: usize = 25;
 const BUY_LIMIT: usize = 3;
 const SAFE_CHAIN_SIZE: usize = 11;
+const DUMMY_CHAIN_INDEX: usize = 999;
 
 fn chain_name(chain_index: usize) -> &'static str {
     match chain_index {
@@ -166,8 +167,8 @@ enum TurnPhase {
     // 2+ existing chains are merging.
     // Payload: (choices for the winning chain, all merging chains).
     MergeChains(Vec<usize>, Vec<usize>),
-    // Post-merger stock disposal.
-    SellStock,
+    // Post-merger stock disposal. Payload: selling player index.
+    SellStock(usize),
     // Buy phase. Payload indicates the number of buyable stocks per chain.
     BuyStock([usize; MAX_NUM_CHAINS]),
     // Game over. Payload indicates each player's final value.
@@ -413,19 +414,17 @@ impl GameState {
                     .filter(|&i| self.chain_sizes[*i] == max_chain_size)
                     .copied()
                     .collect();
-                // Note: we're choosing an arbitrary winner here, but the player
-                // will be able to choose the actual winner later. This step is
-                // needed to bring adjacent non-chain hotels into the chain.
-                let winner_cell = GridCell::Chain(winner_choices[0]);
-                self.grid[tile.0][tile.1] = winner_cell;
-                let mut added_to_winner = 1;
+                // Assign newly-chained hotel tiles to a dummy chain index.
+                // This brings adjacent non-chain hotels into the chain, even
+                // though the player may still need to decide which chain is
+                // the winner of the merger.
+                let dummy = GridCell::Chain(DUMMY_CHAIN_INDEX);
+                self.grid[tile.0][tile.1] = dummy;
                 for (t, c) in neighbors {
                     if let GridCell::Hotel = c {
-                        self.grid[t.0][t.1] = winner_cell;
-                        added_to_winner += 1;
+                        self.grid[t.0][t.1] = dummy;
                     }
                 }
-                self.chain_sizes[winner_choices[0]] += added_to_winner;
                 self.turn_state.phase = TurnPhase::MergeChains(winner_choices, candidates);
             }
         }
@@ -464,86 +463,89 @@ impl GameState {
             if !valid_indices.contains(&chain_index) {
                 return Err(format!("Invalid chain index: {}", chain_index));
             }
+            let loser_chains = merging_chains
+                .iter()
+                .filter(|&&i| i != chain_index)
+                .copied()
+                .collect::<Vec<usize>>();
+            // Update the grid and count additions to the winning chain.
+            let mut new_hotels = 0;
             for row in &mut self.grid {
                 for cell in row {
                     if let GridCell::Chain(idx) = cell {
-                        if idx != &chain_index && merging_chains.contains(idx) {
+                        if *idx == DUMMY_CHAIN_INDEX || loser_chains.contains(idx) {
                             *cell = GridCell::Chain(chain_index);
+                            new_hotels += 1;
                         }
                     }
                 }
             }
-            for &i in merging_chains {
-                if i != chain_index {
-                    let majority_bonus = self.stock_price(chain_index) * 10;
-                    let second_bonus = majority_bonus / 2;
-                    let mut holdings: Vec<(usize, usize)> = self
-                        .players
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| (p.stocks[i], i))
-                        .collect();
-                    holdings.sort_unstable();
-                    holdings.reverse();
-                    let max_held = holdings[0].0;
-                    let majority_players = holdings
-                        .iter()
-                        .filter(|(held, _)| *held == max_held)
-                        .map(|(_, i)| *i)
-                        .collect::<Vec<usize>>();
-                    if majority_players.len() > 1 {
-                        // Bonuses are summed and then split evenly.
-                        let mut amount = (majority_bonus + second_bonus) / majority_players.len();
-                        // Round up to the nearest 100.
-                        if amount % 100 != 0 {
-                            amount += 100 - (amount % 100);
-                        }
-                        for player in majority_players {
-                            self.players[player].cash += amount;
-                        }
-                    } else {
-                        let majority_player = majority_players[0];
-                        self.players[majority_player].cash += majority_bonus;
-                        let second_held = holdings[1].0;
-                        // If the majority holder is the only holder, give them
-                        // the second bonus as well.
-                        if second_held == 0 {
-                            self.players[majority_player].cash += second_bonus;
-                        } else {
-                            let second_players = holdings
-                                .iter()
-                                .filter(|(held, _)| *held == second_held)
-                                .map(|(_, i)| *i)
-                                .collect::<Vec<usize>>();
-                            let mut amount = second_bonus / second_players.len();
-                            // Round up to the nearest 100.
-                            if amount % 100 != 0 {
-                                amount += 100 - (amount % 100);
-                            }
-                            for player in second_players {
-                                self.players[player].cash += amount;
-                            }
-                        }
-                    }
+            // Update the winning chain's size.
+            self.chain_sizes[chain_index] += new_hotels;
 
-                    self.chain_sizes[chain_index] += self.chain_sizes[i];
-                    self.chain_sizes[i] = 0;
+            // TODO: Split this into separate phases. Bonuses and stock disposal
+            // should be handled separately for each loser chain in order, with
+            // each player choosing which stocks to sell/trade/keep each time.
+            for loser_index in loser_chains {
+                let majority_bonus = self.stock_price(loser_index) * 10;
+                let second_bonus = majority_bonus / 2;
+                let mut holdings: Vec<(usize, usize)> = self
+                    .players
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| (p.stocks[i], i))
+                    .collect();
+                holdings.sort_unstable();
+                holdings.reverse();
+                let max_held = holdings[0].0;
+                let majority_players: Vec<usize> = holdings
+                    .iter()
+                    .filter(|(held, _)| *held == max_held)
+                    .map(|(_, i)| *i)
+                    .collect();
+                if majority_players.len() > 1 {
+                    // Bonuses are summed in the case of a tie for first place.
+                    self.distribute_bonus(majority_bonus + second_bonus, &majority_players);
+                } else {
+                    let majority_player = majority_players[0];
+                    self.players[majority_player].cash += majority_bonus;
+                    let second_held = holdings[1].0;
+                    // If the majority holder is the only holder, give them
+                    // the second bonus as well.
+                    if second_held == 0 {
+                        self.players[majority_player].cash += second_bonus;
+                    } else {
+                        let second_players: Vec<usize> = holdings
+                            .iter()
+                            .filter(|(held, _)| *held == second_held)
+                            .map(|(_, i)| *i)
+                            .collect();
+                        self.distribute_bonus(second_bonus, &second_players);
+                    }
                 }
+                // TODO: We shouldn't do this yet.
+                self.chain_sizes[loser_index] = 0;
             }
-            // TODO: Prepare a payload for the SellStock phase.
-            self.turn_state.phase = TurnPhase::SellStock;
+            self.turn_state.phase = TurnPhase::SellStock(self.turn_state.player);
             Ok(())
         } else {
             return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
         }
     }
     fn sell_stock(&mut self, _amount: usize) -> Result<(), String> {
-        if let TurnPhase::SellStock = &self.turn_state.phase {
+        if let TurnPhase::SellStock(selling_player) = &self.turn_state.phase {
+            // TODO: sell stocks.
+            let next_player = (selling_player + 1) % self.players.len();
+            if next_player == self.turn_state.player {
+                // All players have sold their stocks, move on to the buy phase.
+                self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
+            } else {
+                self.turn_state.phase = TurnPhase::SellStock(next_player);
+            }
+            Ok(())
         } else {
             return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
         }
-        self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
-        todo!("Selling stocks is not implemented yet.");
     }
     fn buy_stock(&mut self, buy_order: [usize; MAX_NUM_CHAINS]) -> Result<(), String> {
         if let TurnPhase::BuyStock(available) = &self.turn_state.phase {
@@ -626,5 +628,15 @@ impl GameState {
             })
             .collect::<Vec<usize>>();
         self.turn_state.phase = TurnPhase::PlaceTile(playable_tiles);
+    }
+    fn distribute_bonus(&mut self, bonus: usize, receiving_players: &[usize]) {
+        let mut amount = bonus / receiving_players.len();
+        // Round up to the nearest 100.
+        if amount % 100 != 0 {
+            amount += 100 - (amount % 100);
+        }
+        for p in receiving_players {
+            self.players[*p].cash += amount;
+        }
     }
 }
