@@ -30,15 +30,19 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
         TurnPhase::CreateChain(_, _) => {
             println!("Choose a chain (index) to create, or 'q' to quit:");
         }
-        TurnPhase::MergeChains(choices, _) => {
+        TurnPhase::PickWinningChain(choices, _) => {
             if choices.len() == 1 {
                 println!("Press enter to merge chains, or 'q' to quit:");
             } else {
                 println!("Choose a chain (index) to win the merger, or 'q' to quit:");
             }
         }
-        TurnPhase::SellStock(idx) => {
-            println!("Player {idx}: Choose how much stock to sell, or 'q' to quit:");
+        TurnPhase::ResolveMerger(_, chains, player_idx) => {
+            println!(
+                "Player {}: Choose 'sell,trade' amounts of {} stock, or 'q' to quit:",
+                player_idx,
+                chain_name(chains[0])
+            );
         }
         TurnPhase::BuyStock(_) => {
             println!("Choose up to 3 stocks (comma-sep indices), or 'q' to quit:");
@@ -61,17 +65,20 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
             let chain_idx = input.trim().parse::<usize>()?;
             game.create_chain(chain_idx)?;
         }
-        TurnPhase::MergeChains(choices, _) => {
+        TurnPhase::PickWinningChain(choices, _) => {
             if choices.len() > 1 {
                 let chain_idx = input.trim().parse::<usize>()?;
-                game.merge_chains(chain_idx)?;
+                game.pick_winning_chain(chain_idx)?;
             } else {
-                game.merge_chains(choices[0])?;
+                game.pick_winning_chain(choices[0])?;
             }
         }
-        TurnPhase::SellStock(_) => {
-            let amount = input.trim().parse::<usize>()?;
-            game.sell_stock(amount)?;
+        TurnPhase::ResolveMerger(_, _, _) => {
+            let mut sell_trade = [0, 0];
+            for (i, s) in input.trim().split(',').enumerate() {
+                sell_trade[i] = s.parse::<usize>()?;
+            }
+            game.resolve_merger(sell_trade[0], sell_trade[1])?;
         }
         TurnPhase::BuyStock(_) => {
             let mut buy_order = [0; MAX_NUM_CHAINS];
@@ -109,6 +116,7 @@ fn chain_name(chain_index: usize) -> &'static str {
         4 => "Festival",
         5 => "Imperial",
         6 => "Continental",
+        DUMMY_CHAIN_INDEX => "Dummy",
         _ => panic!("Invalid chain index"),
     }
 }
@@ -166,9 +174,10 @@ enum TurnPhase {
     CreateChain(Tile, Vec<usize>),
     // 2+ existing chains are merging.
     // Payload: (choices for the winning chain, all merging chains).
-    MergeChains(Vec<usize>, Vec<usize>),
-    // Post-merger stock disposal. Payload: selling player index.
-    SellStock(usize),
+    PickWinningChain(Vec<usize>, Vec<usize>),
+    // Post-merger stock disposal.
+    // Payload: (winning chain, remaining chains to merge, player idx)
+    ResolveMerger(usize, Vec<usize>, usize),
     // Buy phase. Payload indicates the number of buyable stocks per chain.
     BuyStock([usize; MAX_NUM_CHAINS]),
     // Game over. Payload indicates each player's final value.
@@ -425,7 +434,7 @@ impl GameState {
                         self.grid[t.0][t.1] = dummy;
                     }
                 }
-                self.turn_state.phase = TurnPhase::MergeChains(winner_choices, candidates);
+                self.turn_state.phase = TurnPhase::PickWinningChain(winner_choices, candidates);
             }
         }
         Ok(())
@@ -458,8 +467,8 @@ impl GameState {
             Err(format!("Wrong phase: {:?}", self.turn_state.phase))
         }
     }
-    fn merge_chains(&mut self, chain_index: usize) -> Result<(), String> {
-        if let TurnPhase::MergeChains(valid_indices, merging_chains) = &self.turn_state.phase {
+    fn pick_winning_chain(&mut self, chain_index: usize) -> Result<(), String> {
+        if let TurnPhase::PickWinningChain(valid_indices, merging_chains) = &self.turn_state.phase {
             if !valid_indices.contains(&chain_index) {
                 return Err(format!("Invalid chain index: {}", chain_index));
             }
@@ -482,12 +491,34 @@ impl GameState {
             }
             // Update the winning chain's size.
             self.chain_sizes[chain_index] += new_hotels;
+            self.turn_state.phase =
+                TurnPhase::ResolveMerger(chain_index, loser_chains, self.turn_state.player);
+            Ok(())
+        } else {
+            return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
+        }
+    }
+    fn resolve_merger(&mut self, sell_amount: usize, trade_amount: usize) -> Result<(), String> {
+        if let TurnPhase::ResolveMerger(winner_chain, loser_chains, selling_player) =
+            &self.turn_state.phase
+        {
+            let loser_index = loser_chains[0];
+            let loser_price = self.stock_price(loser_index);
 
-            // TODO: Split this into separate phases. Bonuses and stock disposal
-            // should be handled separately for each loser chain in order, with
-            // each player choosing which stocks to sell/trade/keep each time.
-            for loser_index in loser_chains {
-                let majority_bonus = self.stock_price(loser_index) * 10;
+            let num_not_kept = sell_amount + trade_amount;
+            let num_traded = trade_amount / 2;
+            // TODO: Validate that the selling player has enough stocks to sell / trade.
+            // TODO: Validate that there are enough winner chain stocks to trade for.
+
+            self.players[*selling_player].stocks[loser_index] -= num_not_kept;
+            self.players[*selling_player].cash += loser_price * sell_amount;
+            self.stock_market[loser_index] += num_not_kept;
+            self.stock_market[*winner_chain] -= num_traded;
+            self.players[*selling_player].stocks[*winner_chain] += num_traded;
+
+            // If this is the merging player's turn, distribute the merger bonuses.
+            if *selling_player == self.turn_state.player {
+                let majority_bonus = loser_price * 10;
                 let second_bonus = majority_bonus / 2;
                 let mut holdings: Vec<(usize, usize)> = self
                     .players
@@ -505,7 +536,11 @@ impl GameState {
                     .collect();
                 if majority_players.len() > 1 {
                     // Bonuses are summed in the case of a tie for first place.
-                    self.distribute_bonus(majority_bonus + second_bonus, &majority_players);
+                    distribute_bonus(
+                        majority_bonus + second_bonus,
+                        &majority_players,
+                        &mut self.players,
+                    );
                 } else {
                     let majority_player = majority_players[0];
                     self.players[majority_player].cash += majority_bonus;
@@ -520,27 +555,30 @@ impl GameState {
                             .filter(|(held, _)| *held == second_held)
                             .map(|(_, i)| *i)
                             .collect();
-                        self.distribute_bonus(second_bonus, &second_players);
+                        distribute_bonus(second_bonus, &second_players, &mut self.players);
                     }
                 }
-                // TODO: We shouldn't do this yet.
-                self.chain_sizes[loser_index] = 0;
             }
-            self.turn_state.phase = TurnPhase::SellStock(self.turn_state.player);
-            Ok(())
-        } else {
-            return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
-        }
-    }
-    fn sell_stock(&mut self, _amount: usize) -> Result<(), String> {
-        if let TurnPhase::SellStock(selling_player) = &self.turn_state.phase {
-            // TODO: sell stocks.
+
             let next_player = (selling_player + 1) % self.players.len();
             if next_player == self.turn_state.player {
-                // All players have sold their stocks, move on to the buy phase.
-                self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
+                // This merger is complete.
+                self.chain_sizes[loser_index] = 0;
+                if loser_chains.len() > 1 {
+                    // There are more mergers to resolve.
+                    self.turn_state.phase = TurnPhase::ResolveMerger(
+                        *winner_chain,
+                        loser_chains[1..].to_vec(),
+                        next_player,
+                    );
+                } else {
+                    // All mergers are resolved, move on to the buy phase.
+                    self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
+                }
             } else {
-                self.turn_state.phase = TurnPhase::SellStock(next_player);
+                // Let the next player resolve the merger.
+                self.turn_state.phase =
+                    TurnPhase::ResolveMerger(*winner_chain, loser_chains.clone(), next_player);
             }
             Ok(())
         } else {
@@ -629,14 +667,15 @@ impl GameState {
             .collect::<Vec<usize>>();
         self.turn_state.phase = TurnPhase::PlaceTile(playable_tiles);
     }
-    fn distribute_bonus(&mut self, bonus: usize, receiving_players: &[usize]) {
-        let mut amount = bonus / receiving_players.len();
-        // Round up to the nearest 100.
-        if amount % 100 != 0 {
-            amount += 100 - (amount % 100);
-        }
-        for p in receiving_players {
-            self.players[*p].cash += amount;
-        }
+}
+
+fn distribute_bonus(bonus: usize, receiving_players: &[usize], players: &mut [Player]) {
+    let mut amount = bonus / receiving_players.len();
+    // Round up to the nearest 100.
+    if amount % 100 != 0 {
+        amount += 100 - (amount % 100);
+    }
+    for p in receiving_players {
+        players[*p].cash += amount;
     }
 }
