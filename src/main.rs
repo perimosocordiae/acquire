@@ -404,12 +404,10 @@ impl GameState {
             }
             // Merging 2+ chains.
             _ => {
+                // Sort candidates by chain size, descending.
+                candidates.sort_unstable_by_key(|&i| 1000 - self.chain_sizes[i]);
                 // Only the largest chain can be the winner of the merge.
-                let max_chain_size = candidates
-                    .iter()
-                    .map(|&i| self.chain_sizes[i])
-                    .max()
-                    .unwrap();
+                let max_chain_size = self.chain_sizes[candidates[0]];
                 let winner_choices: Vec<usize> = candidates
                     .iter()
                     .filter(|&i| self.chain_sizes[*i] == max_chain_size)
