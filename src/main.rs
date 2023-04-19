@@ -475,6 +475,57 @@ impl GameState {
             }
             for &i in merging_chains {
                 if i != chain_index {
+                    let majority_bonus = self.stock_price(chain_index) * 10;
+                    let second_bonus = majority_bonus / 2;
+                    let mut holdings: Vec<(usize, usize)> = self
+                        .players
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (p.stocks[i], i))
+                        .collect();
+                    holdings.sort_unstable();
+                    holdings.reverse();
+                    let max_held = holdings[0].0;
+                    let majority_players = holdings
+                        .iter()
+                        .filter(|(held, _)| *held == max_held)
+                        .map(|(_, i)| *i)
+                        .collect::<Vec<usize>>();
+                    if majority_players.len() > 1 {
+                        // Bonuses are summed and then split evenly.
+                        let mut amount = (majority_bonus + second_bonus) / majority_players.len();
+                        // Round up to the nearest 100.
+                        if amount % 100 != 0 {
+                            amount += 100 - (amount % 100);
+                        }
+                        for player in majority_players {
+                            self.players[player].cash += amount;
+                        }
+                    } else {
+                        let majority_player = majority_players[0];
+                        self.players[majority_player].cash += majority_bonus;
+                        let second_held = holdings[1].0;
+                        // If the majority holder is the only holder, give them
+                        // the second bonus as well.
+                        if second_held == 0 {
+                            self.players[majority_player].cash += second_bonus;
+                        } else {
+                            let second_players = holdings
+                                .iter()
+                                .filter(|(held, _)| *held == second_held)
+                                .map(|(_, i)| *i)
+                                .collect::<Vec<usize>>();
+                            let mut amount = second_bonus / second_players.len();
+                            // Round up to the nearest 100.
+                            if amount % 100 != 0 {
+                                amount += 100 - (amount % 100);
+                            }
+                            for player in second_players {
+                                self.players[player].cash += amount;
+                            }
+                        }
+                    }
+
                     self.chain_sizes[chain_index] += self.chain_sizes[i];
                     self.chain_sizes[i] = 0;
                 }
