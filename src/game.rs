@@ -554,7 +554,11 @@ impl GameState {
                 _ => None,
             })
             .collect::<Vec<usize>>();
-        self.turn_state.phase = TurnPhase::PlaceTile(playable_tiles);
+        if playable_tiles.is_empty() {
+            self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
+        } else {
+            self.turn_state.phase = TurnPhase::PlaceTile(playable_tiles);
+        }
     }
 }
 
