@@ -35,7 +35,7 @@ impl std::fmt::Debug for Tile {
 }
 
 pub struct Player {
-    cash: usize,
+    pub cash: usize,
     stocks: [usize; MAX_NUM_CHAINS],
     pub tiles: Vec<Tile>,
 }
@@ -172,7 +172,7 @@ impl GameState {
         }
         available_stocks
     }
-    fn stock_price(&self, chain_index: usize) -> usize {
+    pub fn stock_price(&self, chain_index: usize) -> usize {
         let chain_size = self.chain_sizes[chain_index];
         let price = match chain_size {
             0..=0 => {

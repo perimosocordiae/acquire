@@ -6,11 +6,54 @@ fn main() {
     let mut rng = rand::thread_rng();
     let mut game = GameState::new(4, &mut rng);
 
+    if std::env::args().nth(1) == Some("self_play".to_string()) {
+        self_play(&mut game);
+    } else {
+        game_loop(&mut game);
+    }
+}
+
+fn self_play(game: &mut GameState) {
+    // Take arbitrary actions until the game is over.
+    loop {
+        match &game.turn_state.phase {
+            TurnPhase::PlaceTile(tile_inds) => {
+                game.place_tile(tile_inds[0]).unwrap();
+            }
+            TurnPhase::CreateChain(_, chain_inds) => {
+                game.create_chain(chain_inds[0]).unwrap();
+            }
+            TurnPhase::PickWinningChain(choices, _) => {
+                game.pick_winning_chain(choices[0]).unwrap();
+            }
+            TurnPhase::ResolveMerger(_, _, _) => {
+                game.resolve_merger(0, 0).unwrap();
+            }
+            TurnPhase::BuyStock(buyable_amounts) => {
+                let mut buy_order = [0; MAX_NUM_CHAINS];
+                for (i, &amount) in buyable_amounts.iter().enumerate() {
+                    if amount > 0 && game.stock_price(i) < game.players[game.turn_state.player].cash
+                    {
+                        buy_order[i] = 1;
+                        break;
+                    }
+                }
+                game.buy_stock(buy_order).unwrap();
+            }
+            TurnPhase::GameOver(final_values) => {
+                println!("Game over! Final values: {:?}", final_values);
+                break;
+            }
+        }
+    }
+}
+
+fn game_loop(game: &mut GameState) {
     // Super-janky CLI for testing.
     let mut input = String::new();
     loop {
         print!("{}", game);
-        match game_loop(&mut game, &mut input) {
+        match handle_turn(game, &mut input) {
             Ok(true) => {}
             Ok(false) => {
                 break;
@@ -23,7 +66,7 @@ fn main() {
     }
 }
 
-fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn Error>> {
+fn handle_turn(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn Error>> {
     match &game.turn_state.phase {
         TurnPhase::PlaceTile(tile_inds) => {
             println!("Choose a tile (index) to play, or 'q' to quit:");
