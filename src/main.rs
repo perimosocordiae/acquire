@@ -524,8 +524,25 @@ impl GameState {
 
             let num_not_kept = sell_amount + trade_amount;
             let num_traded = trade_amount / 2;
-            // TODO: Validate that the selling player has enough stocks to sell / trade.
-            // TODO: Validate that there are enough winner chain stocks to trade for.
+            // Validate that the selling player has enough stocks to sell / trade.
+            let prev_stocks = self.players[*selling_player].stocks[loser_index];
+            if prev_stocks < num_not_kept {
+                return Err(format!(
+                    "Cannot sell/trade {} stocks of {}, only have {} total.",
+                    num_not_kept,
+                    chain_name(loser_index),
+                    prev_stocks
+                ));
+            }
+            // Validate that there are enough winner chain stocks to trade for.
+            if num_traded > self.stock_market[*winner_chain] {
+                return Err(format!(
+                    "Cannot trade {} stocks of {}, market has {} available.",
+                    num_traded,
+                    chain_name(*winner_chain),
+                    self.stock_market[*winner_chain]
+                ));
+            }
 
             self.players[*selling_player].stocks[loser_index] -= num_not_kept;
             self.players[*selling_player].cash += loser_price * sell_amount;
