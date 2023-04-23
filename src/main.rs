@@ -24,17 +24,29 @@ fn main() {
 
 fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn Error>> {
     match &game.turn_state.phase {
-        TurnPhase::PlaceTile(_) => {
+        TurnPhase::PlaceTile(tile_inds) => {
             println!("Choose a tile (index) to play, or 'q' to quit:");
+            for idx in tile_inds {
+                println!(
+                    "{}: {:?}",
+                    idx, game.players[game.turn_state.player].tiles[*idx]
+                );
+            }
         }
-        TurnPhase::CreateChain(_, _) => {
+        TurnPhase::CreateChain(_, chain_inds) => {
             println!("Choose a chain (index) to create, or 'q' to quit:");
+            for idx in chain_inds {
+                println!("{}: {}", idx, chain_name(*idx));
+            }
         }
         TurnPhase::PickWinningChain(choices, _) => {
             if choices.len() == 1 {
                 println!("Press enter to merge chains, or 'q' to quit:");
             } else {
                 println!("Choose a chain (index) to win the merger, or 'q' to quit:");
+                for idx in choices {
+                    println!("{}: {}", idx, chain_name(*idx));
+                }
             }
         }
         TurnPhase::ResolveMerger(_, chains, player_idx) => {
@@ -44,8 +56,13 @@ fn game_loop(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn E
                 chain_name(chains[0])
             );
         }
-        TurnPhase::BuyStock(_) => {
+        TurnPhase::BuyStock(buyable_amounts) => {
             println!("Choose up to 3 stocks (comma-sep indices), or 'q' to quit:");
+            for (i, &amount) in buyable_amounts.iter().enumerate() {
+                if amount > 0 {
+                    println!("{}: {} buyable in {}", i, amount, chain_name(i));
+                }
+            }
         }
         TurnPhase::GameOver(final_values) => {
             println!("Game over! Final values: {:?}", final_values);
