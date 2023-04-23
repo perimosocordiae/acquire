@@ -397,7 +397,7 @@ impl GameState {
                 TurnPhase::ResolveMerger(chain_index, loser_chains, self.turn_state.player);
             Ok(())
         } else {
-            return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
+            Err(format!("Wrong phase: {:?}", self.turn_state.phase))
         }
     }
     pub fn resolve_merger(
@@ -466,7 +466,7 @@ impl GameState {
             }
             Ok(())
         } else {
-            return Err(format!("Wrong phase: {:?}", self.turn_state.phase));
+            Err(format!("Wrong phase: {:?}", self.turn_state.phase))
         }
     }
     pub fn buy_stock(&mut self, buy_order: [usize; MAX_NUM_CHAINS]) -> Result<(), String> {
@@ -537,7 +537,6 @@ impl GameState {
                 }
             }
             let final_values = (0..self.players.len())
-                .into_iter()
                 .map(|i| self.player_value(i))
                 .collect();
             self.turn_state.phase = TurnPhase::GameOver(final_values);
