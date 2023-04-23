@@ -552,46 +552,7 @@ impl GameState {
 
             // If this is the merging player's turn, distribute the merger bonuses.
             if *selling_player == self.turn_state.player {
-                let majority_bonus = loser_price * 10;
-                let second_bonus = majority_bonus / 2;
-                let mut holdings: Vec<(usize, usize)> = self
-                    .players
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| (p.stocks[i], i))
-                    .collect();
-                holdings.sort_unstable();
-                holdings.reverse();
-                let max_held = holdings[0].0;
-                let majority_players: Vec<usize> = holdings
-                    .iter()
-                    .filter(|(held, _)| *held == max_held)
-                    .map(|(_, i)| *i)
-                    .collect();
-                if majority_players.len() > 1 {
-                    // Bonuses are summed in the case of a tie for first place.
-                    distribute_bonus(
-                        majority_bonus + second_bonus,
-                        &majority_players,
-                        &mut self.players,
-                    );
-                } else {
-                    let majority_player = majority_players[0];
-                    self.players[majority_player].cash += majority_bonus;
-                    let second_held = holdings[1].0;
-                    // If the majority holder is the only holder, give them
-                    // the second bonus as well.
-                    if second_held == 0 {
-                        self.players[majority_player].cash += second_bonus;
-                    } else {
-                        let second_players: Vec<usize> = holdings
-                            .iter()
-                            .filter(|(held, _)| *held == second_held)
-                            .map(|(_, i)| *i)
-                            .collect();
-                        distribute_bonus(second_bonus, &second_players, &mut self.players);
-                    }
-                }
+                pay_bonuses(loser_price, &mut self.players);
             }
 
             let next_player = (selling_player + 1) % self.players.len();
@@ -673,14 +634,19 @@ impl GameState {
 
         // Check for game over conditions.
         let max_chain_size = *self.chain_sizes.iter().max().unwrap();
-        if max_chain_size > 40
+        let is_game_over = max_chain_size > 40
             || (max_chain_size >= SAFE_CHAIN_SIZE
                 && self
                     .chain_sizes
                     .iter()
-                    .all(|&size| size >= SAFE_CHAIN_SIZE || size == 0))
-        {
-            // TODO: Sell off all remaining stock for each player.
+                    .all(|&size| size >= SAFE_CHAIN_SIZE || size == 0));
+        if is_game_over {
+            // Pay bonuses for each active chain.
+            for (i, &size) in self.chain_sizes.iter().enumerate() {
+                if size > 0 {
+                    pay_bonuses(self.stock_price(i), &mut self.players);
+                }
+            }
             let final_values = (0..self.players.len())
                 .into_iter()
                 .map(|i| self.player_value(i))
@@ -711,5 +677,43 @@ fn distribute_bonus(bonus: usize, receiving_players: &[usize], players: &mut [Pl
     }
     for p in receiving_players {
         players[*p].cash += amount;
+    }
+}
+
+fn pay_bonuses(stock_price: usize, players: &mut [Player]) {
+    let majority_bonus = stock_price * 10;
+    let second_bonus = majority_bonus / 2;
+    let mut holdings: Vec<(usize, usize)> = players
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.stocks[i], i))
+        .collect();
+    holdings.sort_unstable();
+    holdings.reverse();
+    let max_held = holdings[0].0;
+    let majority_players: Vec<usize> = holdings
+        .iter()
+        .filter(|(held, _)| *held == max_held)
+        .map(|(_, i)| *i)
+        .collect();
+    if majority_players.len() > 1 {
+        // Bonuses are summed in the case of a tie for first place.
+        distribute_bonus(majority_bonus + second_bonus, &majority_players, players);
+    } else {
+        let majority_player = majority_players[0];
+        self.players[majority_player].cash += majority_bonus;
+        let second_held = holdings[1].0;
+        // If the majority holder is the only holder, give them
+        // the second bonus as well.
+        if second_held == 0 {
+            players[majority_player].cash += second_bonus;
+        } else {
+            let second_players: Vec<usize> = holdings
+                .iter()
+                .filter(|(held, _)| *held == second_held)
+                .map(|(_, i)| *i)
+                .collect();
+            distribute_bonus(second_bonus, &second_players, players);
+        }
     }
 }
