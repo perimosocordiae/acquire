@@ -540,6 +540,7 @@ impl GameState {
                 .map(|i| self.player_value(i))
                 .collect();
             self.turn_state.phase = TurnPhase::GameOver(final_values);
+            return;
         }
 
         // Advance to the next player's turn.
