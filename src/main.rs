@@ -40,8 +40,8 @@ fn self_play(game: &mut GameState) {
                 }
                 game.buy_stock(buy_order).unwrap();
             }
-            TurnPhase::GameOver(final_values) => {
-                println!("Game over! Final values: {:?}", final_values);
+            TurnPhase::GameOver(_) => {
+                println!("Game over!\n{}", game);
                 break;
             }
         }
