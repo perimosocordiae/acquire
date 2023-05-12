@@ -1,4 +1,7 @@
+mod agent;
 mod game;
+use game::TurnAction;
+
 use crate::game::{chain_name, GameState, TurnPhase, MAX_NUM_CHAINS};
 use std::error::Error;
 
@@ -15,35 +18,12 @@ fn main() {
 
 fn self_play(game: &mut GameState) {
     // Take arbitrary actions until the game is over.
+    let ai = agent::create_agent(0);
     loop {
-        match &game.turn_state.phase {
-            TurnPhase::PlaceTile(tile_inds) => {
-                game.place_tile(tile_inds[0]).unwrap();
-            }
-            TurnPhase::CreateChain(_, chain_inds) => {
-                game.create_chain(chain_inds[0]).unwrap();
-            }
-            TurnPhase::PickWinningChain(choices, _) => {
-                game.pick_winning_chain(choices[0]).unwrap();
-            }
-            TurnPhase::ResolveMerger(_, _, _) => {
-                game.resolve_merger(0, 0).unwrap();
-            }
-            TurnPhase::BuyStock(buyable_amounts) => {
-                let mut buy_order = [0; MAX_NUM_CHAINS];
-                for (i, &amount) in buyable_amounts.iter().enumerate() {
-                    if amount > 0 && game.stock_price(i) < game.players[game.turn_state.player].cash
-                    {
-                        buy_order[i] = 1;
-                        break;
-                    }
-                }
-                game.buy_stock(buy_order).unwrap();
-            }
-            TurnPhase::GameOver(_) => {
-                println!("Game over!\n{}", game);
-                break;
-            }
+        let action = ai.choose_action(game);
+        if game.take_turn(action).unwrap() {
+            println!("Game over!\n{}", game);
+            break;
         }
     }
 }
@@ -54,8 +34,10 @@ fn game_loop(game: &mut GameState) {
     loop {
         print!("{}", game);
         match handle_turn(game, &mut input) {
-            Ok(true) => {}
-            Ok(false) => {
+            Ok(Some(action)) => {
+                game.take_turn(action).unwrap();
+            }
+            Ok(None) => {
                 break;
             }
             Err(e) => {
@@ -66,7 +48,10 @@ fn game_loop(game: &mut GameState) {
     }
 }
 
-fn handle_turn(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn Error>> {
+fn handle_turn(
+    game: &mut GameState,
+    input: &mut String,
+) -> Result<Option<TurnAction>, Box<dyn Error>> {
     match &game.turn_state.phase {
         TurnPhase::PlaceTile(tile_inds) => {
             println!("Choose a tile (index) to play, or 'q' to quit:");
@@ -110,36 +95,36 @@ fn handle_turn(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn
         }
         TurnPhase::GameOver(final_values) => {
             println!("Game over! Final values: {:?}", final_values);
-            return Ok(false);
+            return Ok(None);
         }
     }
     std::io::stdin().read_line(input)?;
     if input.trim() == "q" {
-        return Ok(false);
+        return Ok(None);
     }
-    match &game.turn_state.phase {
+    let action = match &game.turn_state.phase {
         TurnPhase::PlaceTile(_) => {
             let tile_idx = input.trim().parse::<usize>()?;
-            game.place_tile(tile_idx)?;
+            TurnAction::PlaceTile(tile_idx)
         }
         TurnPhase::CreateChain(_, _) => {
             let chain_idx = input.trim().parse::<usize>()?;
-            game.create_chain(chain_idx)?;
+            TurnAction::CreateChain(chain_idx)
         }
         TurnPhase::PickWinningChain(choices, _) => {
-            if choices.len() > 1 {
-                let chain_idx = input.trim().parse::<usize>()?;
-                game.pick_winning_chain(chain_idx)?;
+            let chain_idx = if choices.len() > 1 {
+                input.trim().parse::<usize>()?
             } else {
-                game.pick_winning_chain(choices[0])?;
-            }
+                0
+            };
+            TurnAction::PickWinningChain(chain_idx)
         }
         TurnPhase::ResolveMerger(_, _, _) => {
             let mut sell_trade = [0, 0];
             for (i, s) in input.trim().split(',').enumerate() {
                 sell_trade[i] = s.parse::<usize>()?;
             }
-            game.resolve_merger(sell_trade[0], sell_trade[1])?;
+            TurnAction::ResolveMerger(sell_trade[0], sell_trade[1])
         }
         TurnPhase::BuyStock(_) => {
             let mut buy_order = [0; MAX_NUM_CHAINS];
@@ -150,11 +135,11 @@ fn handle_turn(game: &mut GameState, input: &mut String) -> Result<bool, Box<dyn
                 let idx = s.parse::<usize>()?;
                 buy_order[idx] += 1;
             }
-            game.buy_stock(buy_order)?;
+            TurnAction::BuyStock(buy_order)
         }
         TurnPhase::GameOver(_) => {
             panic!("Game is over, this should be unreachable");
         }
-    }
-    Ok(true)
+    };
+    Ok(Some(action))
 }

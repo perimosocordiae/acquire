@@ -87,6 +87,15 @@ pub enum TurnPhase {
 }
 
 #[derive(Debug)]
+pub enum TurnAction {
+    PlaceTile(usize),
+    CreateChain(usize),
+    PickWinningChain(usize),
+    ResolveMerger(usize, usize),
+    BuyStock([usize; MAX_NUM_CHAINS]),
+}
+
+#[derive(Debug)]
 pub struct TurnState {
     pub player: usize,
     pub phase: TurnPhase,
@@ -162,6 +171,16 @@ impl GameState {
             chain_sizes: [0; MAX_NUM_CHAINS],
             stock_market: [STOCKS_PER_CHAIN; MAX_NUM_CHAINS],
         }
+    }
+    pub fn take_turn(&mut self, action: TurnAction) -> Result<bool, String> {
+        match action {
+            TurnAction::PlaceTile(idx) => self.place_tile(idx),
+            TurnAction::CreateChain(idx) => self.create_chain(idx),
+            TurnAction::PickWinningChain(idx) => self.pick_winning_chain(idx),
+            TurnAction::ResolveMerger(sell, trade) => self.resolve_merger(sell, trade),
+            TurnAction::BuyStock(stocks) => self.buy_stock(stocks),
+        }?;
+        Ok(matches!(self.turn_state.phase, TurnPhase::GameOver(_)))
     }
     fn available_stocks(&self) -> [usize; MAX_NUM_CHAINS] {
         let mut available_stocks = [0; MAX_NUM_CHAINS];
@@ -260,7 +279,7 @@ impl GameState {
             TilePlayability::PermanentlyUnplayable
         }
     }
-    pub fn place_tile(&mut self, idx: usize) -> Result<(), String> {
+    fn place_tile(&mut self, idx: usize) -> Result<(), String> {
         if let TurnPhase::PlaceTile(valid_indices) = &self.turn_state.phase {
             if !valid_indices.contains(&idx) {
                 return Err(format!("Invalid tile index: {}", idx));
@@ -341,7 +360,7 @@ impl GameState {
         }
         Ok(())
     }
-    pub fn create_chain(&mut self, chain_index: usize) -> Result<(), String> {
+    fn create_chain(&mut self, chain_index: usize) -> Result<(), String> {
         if let TurnPhase::CreateChain(tile, valid_indices) = &self.turn_state.phase {
             if !valid_indices.contains(&chain_index) {
                 return Err(format!("Invalid chain index: {}", chain_index));
@@ -369,7 +388,7 @@ impl GameState {
             Err(format!("Wrong phase: {:?}", self.turn_state.phase))
         }
     }
-    pub fn pick_winning_chain(&mut self, chain_index: usize) -> Result<(), String> {
+    fn pick_winning_chain(&mut self, chain_index: usize) -> Result<(), String> {
         if let TurnPhase::PickWinningChain(valid_indices, merging_chains) = &self.turn_state.phase {
             if !valid_indices.contains(&chain_index) {
                 return Err(format!("Invalid chain index: {}", chain_index));
@@ -400,11 +419,7 @@ impl GameState {
             Err(format!("Wrong phase: {:?}", self.turn_state.phase))
         }
     }
-    pub fn resolve_merger(
-        &mut self,
-        sell_amount: usize,
-        trade_amount: usize,
-    ) -> Result<(), String> {
+    fn resolve_merger(&mut self, sell_amount: usize, trade_amount: usize) -> Result<(), String> {
         if let TurnPhase::ResolveMerger(winner_chain, loser_chains, selling_player) =
             &self.turn_state.phase
         {
@@ -469,7 +484,7 @@ impl GameState {
             Err(format!("Wrong phase: {:?}", self.turn_state.phase))
         }
     }
-    pub fn buy_stock(&mut self, buy_order: [usize; MAX_NUM_CHAINS]) -> Result<(), String> {
+    fn buy_stock(&mut self, buy_order: [usize; MAX_NUM_CHAINS]) -> Result<(), String> {
         if let TurnPhase::BuyStock(available) = &self.turn_state.phase {
             if buy_order.iter().sum::<usize>() > BUY_LIMIT {
                 return Err(format!(
