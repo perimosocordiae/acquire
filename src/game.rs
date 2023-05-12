@@ -1,4 +1,5 @@
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 
 // Grid cells named from 1-A to 12-I.
 const GRID_WIDTH: usize = 12;
@@ -24,7 +25,7 @@ pub fn chain_name(chain_index: usize) -> &'static str {
 }
 
 // Contains (row, col) indices.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Tile(usize, usize);
 impl std::fmt::Debug for Tile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -34,6 +35,7 @@ impl std::fmt::Debug for Tile {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Player {
     pub cash: usize,
     stocks: [usize; MAX_NUM_CHAINS],
@@ -61,14 +63,14 @@ impl std::fmt::Display for Player {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum GridCell {
     Empty,
     Hotel,
     Chain(usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum TurnPhase {
     // Player has not yet placed a tile. Payload: playable tile indices.
     PlaceTile(Vec<usize>),
@@ -95,7 +97,7 @@ pub enum TurnAction {
     BuyStock([usize; MAX_NUM_CHAINS]),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TurnState {
     pub player: usize,
     pub phase: TurnPhase,
@@ -107,10 +109,22 @@ enum TilePlayability {
     PermanentlyUnplayable,
 }
 
+fn as_vec_len<S, T>(vec: &Vec<T>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_i64(vec.len() as i64)
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GameState {
+    #[serde(skip_deserializing)]
+    #[serde(serialize_with = "as_vec_len")]
     pub players: Vec<Player>,
     pub turn_state: TurnState,
     grid: [[GridCell; GRID_WIDTH]; GRID_HEIGHT],
+    #[serde(skip_deserializing)]
+    #[serde(serialize_with = "as_vec_len")]
     unclaimed_tiles: Vec<Tile>,
     chain_sizes: [usize; MAX_NUM_CHAINS],
     stock_market: [usize; MAX_NUM_CHAINS],
