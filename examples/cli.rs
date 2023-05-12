@@ -1,39 +1,15 @@
-mod agent;
-mod game;
-use game::TurnAction;
-
-use crate::game::{chain_name, GameState, TurnPhase, MAX_NUM_CHAINS};
+use acquire::game::{chain_name, GameState, TurnAction, TurnPhase, MAX_NUM_CHAINS};
 use std::error::Error;
 
 fn main() {
     let mut rng = rand::thread_rng();
     let mut game = GameState::new(4, &mut rng);
 
-    if std::env::args().nth(1) == Some("self_play".to_string()) {
-        self_play(&mut game);
-    } else {
-        game_loop(&mut game);
-    }
-}
-
-fn self_play(game: &mut GameState) {
-    // Take arbitrary actions until the game is over.
-    let ai = agent::create_agent(0);
-    loop {
-        let action = ai.choose_action(game);
-        if game.take_turn(action).unwrap() {
-            println!("Game over!\n{}", game);
-            break;
-        }
-    }
-}
-
-fn game_loop(game: &mut GameState) {
     // Super-janky CLI for testing.
     let mut input = String::new();
     loop {
         print!("{}", game);
-        match handle_turn(game, &mut input) {
+        match handle_turn(&mut game, &mut input) {
             Ok(Some(action)) => {
                 game.take_turn(action).unwrap();
             }
