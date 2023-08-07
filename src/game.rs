@@ -88,7 +88,7 @@ pub enum TurnPhase {
     GameOver(Vec<usize>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum TurnAction {
     PlaceTile(usize),
     CreateChain(usize),
@@ -226,7 +226,7 @@ impl GameState {
             _ => panic!("Invalid chain index"),
         }
     }
-    fn player_value(&self, player: usize) -> usize {
+    pub fn player_value(&self, player: usize) -> usize {
         let mut value = self.players[player].cash;
         for (chain_index, &num_stocks) in self.players[player].stocks.iter().enumerate() {
             if num_stocks > 0 {
