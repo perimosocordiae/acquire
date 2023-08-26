@@ -35,7 +35,7 @@ impl std::fmt::Debug for Tile {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Player {
     pub cash: usize,
     stocks: [usize; MAX_NUM_CHAINS],
@@ -70,7 +70,7 @@ enum GridCell {
     Chain(usize),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum TurnPhase {
     // Player has not yet placed a tile. Payload: playable tile indices.
     PlaceTile(Vec<usize>),
@@ -97,7 +97,7 @@ pub enum TurnAction {
     BuyStock([usize; MAX_NUM_CHAINS]),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TurnState {
     pub player: usize,
     pub phase: TurnPhase,
@@ -116,7 +116,7 @@ where
     serializer.serialize_i64(vec.len() as i64)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GameState {
     #[serde(skip_deserializing)]
     #[serde(serialize_with = "as_vec_len")]
