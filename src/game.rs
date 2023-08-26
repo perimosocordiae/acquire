@@ -10,20 +10,6 @@ const BUY_LIMIT: usize = 3;
 const SAFE_CHAIN_SIZE: usize = 11;
 const DUMMY_CHAIN_INDEX: usize = 999;
 
-pub fn chain_name(chain_index: usize) -> &'static str {
-    match chain_index {
-        0 => "Tower",
-        1 => "Luxor",
-        2 => "American",
-        3 => "Worldwide",
-        4 => "Festival",
-        5 => "Imperial",
-        6 => "Continental",
-        DUMMY_CHAIN_INDEX => "Dummy",
-        _ => panic!("Invalid chain index"),
-    }
-}
-
 // Contains (row, col) indices.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Tile(usize, usize);
@@ -41,25 +27,24 @@ pub struct Player {
     stocks: [usize; MAX_NUM_CHAINS],
     pub tiles: Vec<Tile>,
 }
-impl std::fmt::Display for Player {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Cash: ${}, Stocks: [", self.cash)?;
-        self.stocks
-            .iter()
-            .enumerate()
-            .filter(|(_, &num_stocks)| num_stocks > 0)
-            .map(|(i, &num_stocks)| format!("{}: {}", chain_name(i), num_stocks))
-            .collect::<Vec<String>>()
-            .join(", ")
-            .fmt(f)?;
-        write!(f, "], Tiles: [")?;
-        self.tiles
-            .iter()
-            .map(|t| format!("{:?}", t))
-            .collect::<Vec<String>>()
-            .join(", ")
-            .fmt(f)?;
-        write!(f, "]")
+impl Player {
+    fn display(&self, chain_names: &[String]) -> String {
+        format!(
+            "Cash: ${}, Stocks: [{}], Tiles: [{}]",
+            self.cash,
+            self.stocks
+                .iter()
+                .enumerate()
+                .filter(|(_, &num_stocks)| num_stocks > 0)
+                .map(|(i, &num_stocks)| format!("{}: {}", chain_names[i], num_stocks))
+                .collect::<Vec<String>>()
+                .join(", "),
+            self.tiles
+                .iter()
+                .map(|t| format!("{:?}", t))
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
     }
 }
 
@@ -128,12 +113,13 @@ pub struct GameState {
     unclaimed_tiles: Vec<Tile>,
     chain_sizes: [usize; MAX_NUM_CHAINS],
     stock_market: [usize; MAX_NUM_CHAINS],
+    chain_names: [String; MAX_NUM_CHAINS],
 }
 impl std::fmt::Display for GameState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, p) in self.players.iter().enumerate() {
             writeln!(f, "Player {}: value = ${}", i, self.player_value(i))?;
-            writeln!(f, "  {}", p)?;
+            writeln!(f, "  {}", p.display(&self.chain_names))?;
         }
         writeln!(f, "{} unclaimed tiles", self.unclaimed_tiles.len())?;
         for col in 0..=GRID_WIDTH {
@@ -146,7 +132,9 @@ impl std::fmt::Display for GameState {
                 match cell {
                     GridCell::Empty => write!(f, "_")?,
                     GridCell::Hotel => write!(f, "*")?,
-                    GridCell::Chain(i) => write!(f, "{}", chain_name(*i).chars().next().unwrap())?,
+                    GridCell::Chain(i) => {
+                        write!(f, "{}", self.chain_names[*i].chars().next().unwrap())?
+                    }
                 }
             }
             writeln!(f)?;
@@ -157,7 +145,11 @@ impl std::fmt::Display for GameState {
     }
 }
 impl GameState {
-    pub fn new(num_players: usize, rng: &mut impl rand::Rng) -> Self {
+    pub fn new(
+        num_players: usize,
+        rng: &mut impl rand::Rng,
+        chain_names: [String; MAX_NUM_CHAINS],
+    ) -> Self {
         let mut grid = [[GridCell::Empty; GRID_WIDTH]; GRID_HEIGHT];
         let mut unclaimed_tiles = (0..GRID_HEIGHT)
             .flat_map(|row| (0..GRID_WIDTH).map(move |col| Tile(row, col)))
@@ -184,6 +176,7 @@ impl GameState {
             unclaimed_tiles,
             chain_sizes: [0; MAX_NUM_CHAINS],
             stock_market: [STOCKS_PER_CHAIN; MAX_NUM_CHAINS],
+            chain_names,
         }
     }
     pub fn take_turn(&mut self, action: TurnAction) -> Result<bool, String> {
@@ -448,7 +441,7 @@ impl GameState {
                 return Err(format!(
                     "Cannot sell/trade {} stocks of {}, only have {} total.",
                     num_not_kept,
-                    chain_name(loser_index),
+                    self.chain_names[loser_index],
                     prev_stocks
                 ));
             }
@@ -457,7 +450,7 @@ impl GameState {
                 return Err(format!(
                     "Cannot trade {} stocks of {}, market has {} available.",
                     num_traded,
-                    chain_name(*winner_chain),
+                    self.chain_names[*winner_chain],
                     self.stock_market[*winner_chain]
                 ));
             }

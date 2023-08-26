@@ -1,9 +1,18 @@
-use acquire::game::{chain_name, GameState, TurnAction, TurnPhase, MAX_NUM_CHAINS};
+use acquire::game::{GameState, TurnAction, TurnPhase, MAX_NUM_CHAINS};
 use std::error::Error;
 
 fn main() {
+    let chain_names = [
+        chain_name(0).to_owned(),
+        chain_name(1).to_owned(),
+        chain_name(2).to_owned(),
+        chain_name(3).to_owned(),
+        chain_name(4).to_owned(),
+        chain_name(5).to_owned(),
+        chain_name(6).to_owned(),
+    ];
     let mut rng = rand::thread_rng();
-    let mut game = GameState::new(4, &mut rng);
+    let mut game = GameState::new(4, &mut rng, chain_names);
 
     // Super-janky CLI for testing.
     let mut input = String::new();
@@ -21,6 +30,19 @@ fn main() {
             }
         }
         input.clear();
+    }
+}
+
+fn chain_name(idx: usize) -> &'static str {
+    match idx {
+        0 => "Alice",
+        1 => "Bob",
+        2 => "Charlie",
+        3 => "Dave",
+        4 => "Eve",
+        5 => "Frank",
+        6 => "George",
+        _ => panic!("Invalid chain index"),
     }
 }
 
