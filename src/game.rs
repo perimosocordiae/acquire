@@ -179,6 +179,19 @@ impl GameState {
             unclaimed_tiles,
         }
     }
+    pub fn from_parts(
+        board: BoardState,
+        players: Vec<Player>,
+        turn_state: TurnState,
+        unclaimed_tiles: Vec<Tile>,
+    ) -> Self {
+        Self {
+            board,
+            players,
+            turn_state,
+            unclaimed_tiles,
+        }
+    }
     pub fn num_unclaimed_tiles(&self) -> usize {
         self.unclaimed_tiles.len()
     }
