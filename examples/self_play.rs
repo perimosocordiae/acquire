@@ -3,13 +3,13 @@ use acquire::game::GameState;
 
 fn main() {
     let chain_names = [
-        "A".to_owned(),
-        "B".to_owned(),
-        "C".to_owned(),
-        "D".to_owned(),
-        "E".to_owned(),
-        "F".to_owned(),
-        "G".to_owned(),
+        "K".to_owned(),
+        "L".to_owned(),
+        "M".to_owned(),
+        "N".to_owned(),
+        "O".to_owned(),
+        "P".to_owned(),
+        "Q".to_owned(),
     ];
     let mut rng = rand::thread_rng();
     let mut game = GameState::new(4, &mut rng, chain_names);
