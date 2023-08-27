@@ -94,34 +94,15 @@ enum TilePlayability {
     PermanentlyUnplayable,
 }
 
-fn as_vec_len<S, T>(vec: &Vec<T>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_i64(vec.len() as i64)
-}
-
 #[derive(Serialize, Deserialize, Clone)]
-pub struct GameState {
-    #[serde(skip_deserializing)]
-    #[serde(serialize_with = "as_vec_len")]
-    pub players: Vec<Player>,
-    pub turn_state: TurnState,
+pub struct BoardState {
     grid: [[GridCell; GRID_WIDTH]; GRID_HEIGHT],
-    #[serde(skip_deserializing)]
-    #[serde(serialize_with = "as_vec_len")]
-    unclaimed_tiles: Vec<Tile>,
     chain_sizes: [usize; MAX_NUM_CHAINS],
     stock_market: [usize; MAX_NUM_CHAINS],
     chain_names: [String; MAX_NUM_CHAINS],
 }
-impl std::fmt::Display for GameState {
+impl std::fmt::Display for BoardState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, p) in self.players.iter().enumerate() {
-            writeln!(f, "Player {}: value = ${}", i, self.player_value(i))?;
-            writeln!(f, "  {}", p.display(&self.chain_names))?;
-        }
-        writeln!(f, "{} unclaimed tiles", self.unclaimed_tiles.len())?;
         for col in 0..=GRID_WIDTH {
             write!(f, "{}", col % 10)?;
         }
@@ -140,7 +121,23 @@ impl std::fmt::Display for GameState {
             writeln!(f)?;
         }
         writeln!(f, "Stock market: {:?}", self.stock_market)?;
-        writeln!(f, "Chain sizes: {:?}", self.chain_sizes)?;
+        writeln!(f, "Chain sizes: {:?}", self.chain_sizes)
+    }
+}
+
+pub struct GameState {
+    pub board: BoardState,
+    pub players: Vec<Player>,
+    pub turn_state: TurnState,
+    unclaimed_tiles: Vec<Tile>,
+}
+impl std::fmt::Display for GameState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, p) in self.players.iter().enumerate() {
+            writeln!(f, "Player {}: value = ${}", i, self.player_value(i))?;
+            writeln!(f, "  {}", p.display(&self.board.chain_names))?;
+        }
+        write!(f, "{}", self.board)?;
         writeln!(f, "{:?}", self.turn_state)
     }
 }
@@ -150,7 +147,6 @@ impl GameState {
         rng: &mut impl rand::Rng,
         chain_names: [String; MAX_NUM_CHAINS],
     ) -> Self {
-        let mut grid = [[GridCell::Empty; GRID_WIDTH]; GRID_HEIGHT];
         let mut unclaimed_tiles = (0..GRID_HEIGHT)
             .flat_map(|row| (0..GRID_WIDTH).map(move |col| Tile(row, col)))
             .collect::<Vec<Tile>>();
@@ -162,22 +158,29 @@ impl GameState {
                 tiles: unclaimed_tiles.split_off(unclaimed_tiles.len() - 6),
             })
             .collect();
+        let mut grid = [[GridCell::Empty; GRID_WIDTH]; GRID_HEIGHT];
+        for t in unclaimed_tiles.drain(unclaimed_tiles.len() - num_players..) {
+            grid[t.0][t.1] = GridCell::Hotel;
+        }
+        let board = BoardState {
+            grid,
+            chain_sizes: [0; MAX_NUM_CHAINS],
+            stock_market: [STOCKS_PER_CHAIN; MAX_NUM_CHAINS],
+            chain_names,
+        };
         let turn_state = TurnState {
             player: rng.gen_range(0..num_players),
             phase: TurnPhase::PlaceTile((0..6).collect()),
         };
-        for t in unclaimed_tiles.drain(unclaimed_tiles.len() - num_players..) {
-            grid[t.0][t.1] = GridCell::Hotel;
-        }
         Self {
+            board,
             players,
             turn_state,
-            grid,
             unclaimed_tiles,
-            chain_sizes: [0; MAX_NUM_CHAINS],
-            stock_market: [STOCKS_PER_CHAIN; MAX_NUM_CHAINS],
-            chain_names,
         }
+    }
+    pub fn num_unclaimed_tiles(&self) -> usize {
+        self.unclaimed_tiles.len()
     }
     pub fn take_turn(&mut self, action: TurnAction) -> Result<bool, String> {
         match action {
@@ -191,15 +194,15 @@ impl GameState {
     }
     fn available_stocks(&self) -> [usize; MAX_NUM_CHAINS] {
         let mut available_stocks = [0; MAX_NUM_CHAINS];
-        for (i, &num_stocks) in self.stock_market.iter().enumerate() {
-            if num_stocks > 0 && self.chain_sizes[i] > 1 {
+        for (i, &num_stocks) in self.board.stock_market.iter().enumerate() {
+            if num_stocks > 0 && self.board.chain_sizes[i] > 1 {
                 available_stocks[i] = num_stocks;
             }
         }
         available_stocks
     }
     pub fn stock_price(&self, chain_index: usize) -> usize {
-        let chain_size = self.chain_sizes[chain_index];
+        let chain_size = self.board.chain_sizes[chain_index];
         let price = match chain_size {
             0..=0 => {
                 return 0;
@@ -231,7 +234,7 @@ impl GameState {
     fn grid_neighbors(&self, tile: Tile) -> Vec<(Tile, GridCell)> {
         let mut neighbors = Vec::new();
         let mut maybe_push = |r: usize, c: usize| {
-            let cell = self.grid[r][c];
+            let cell = self.board.grid[r][c];
             if cell != GridCell::Empty {
                 neighbors.push((Tile(r, c), cell));
             }
@@ -267,7 +270,7 @@ impl GameState {
             .collect::<Vec<usize>>();
         // Check for new chain creation.
         if neighbor_chains.is_empty() {
-            return if self.chain_sizes.iter().any(|&size| size == 0) {
+            return if self.board.chain_sizes.iter().any(|&size| size == 0) {
                 TilePlayability::Playable
             } else {
                 TilePlayability::TemporarilyUnplayable
@@ -278,7 +281,7 @@ impl GameState {
         neighbor_chains.dedup();
         let num_safe_neighbors = neighbor_chains
             .into_iter()
-            .filter(|&i| self.chain_sizes[i] >= SAFE_CHAIN_SIZE)
+            .filter(|&i| self.board.chain_sizes[i] >= SAFE_CHAIN_SIZE)
             .count();
         if num_safe_neighbors <= 1 {
             TilePlayability::Playable
@@ -299,7 +302,7 @@ impl GameState {
         let neighbors = self.grid_neighbors(tile);
         if neighbors.is_empty() {
             // Just a single hotel.
-            self.grid[tile.0][tile.1] = GridCell::Hotel;
+            self.board.grid[tile.0][tile.1] = GridCell::Hotel;
             let available_stocks = self.available_stocks();
             if available_stocks.iter().any(|&x| x > 0) {
                 self.turn_state.phase = TurnPhase::BuyStock(available_stocks);
@@ -322,6 +325,7 @@ impl GameState {
             // New chain.
             0 => {
                 let available_chains = self
+                    .board
                     .chain_sizes
                     .iter()
                     .enumerate()
@@ -333,22 +337,22 @@ impl GameState {
             // Joining an existing chain.
             1 => {
                 let chain_index = candidates[0];
-                self.chain_sizes[chain_index] += neighbors.len();
-                self.grid[tile.0][tile.1] = GridCell::Chain(chain_index);
+                self.board.chain_sizes[chain_index] += neighbors.len();
+                self.board.grid[tile.0][tile.1] = GridCell::Chain(chain_index);
                 for (t, _) in neighbors {
-                    self.grid[t.0][t.1] = GridCell::Chain(chain_index);
+                    self.board.grid[t.0][t.1] = GridCell::Chain(chain_index);
                 }
                 self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
             }
             // Merging 2+ chains.
             _ => {
                 // Sort candidates by chain size, descending.
-                candidates.sort_unstable_by_key(|&i| 1000 - self.chain_sizes[i]);
+                candidates.sort_unstable_by_key(|&i| 1000 - self.board.chain_sizes[i]);
                 // Only the largest chain can be the winner of the merge.
-                let max_chain_size = self.chain_sizes[candidates[0]];
+                let max_chain_size = self.board.chain_sizes[candidates[0]];
                 let winner_choices: Vec<usize> = candidates
                     .iter()
-                    .filter(|&i| self.chain_sizes[*i] == max_chain_size)
+                    .filter(|&i| self.board.chain_sizes[*i] == max_chain_size)
                     .copied()
                     .collect();
                 // Assign newly-chained hotel tiles to a dummy chain index.
@@ -356,10 +360,10 @@ impl GameState {
                 // though the player may still need to decide which chain is
                 // the winner of the merger.
                 let dummy = GridCell::Chain(DUMMY_CHAIN_INDEX);
-                self.grid[tile.0][tile.1] = dummy;
+                self.board.grid[tile.0][tile.1] = dummy;
                 for (t, c) in neighbors {
                     if let GridCell::Hotel = c {
-                        self.grid[t.0][t.1] = dummy;
+                        self.board.grid[t.0][t.1] = dummy;
                     }
                 }
                 self.turn_state.phase = TurnPhase::PickWinningChain(winner_choices, candidates);
@@ -372,21 +376,21 @@ impl GameState {
             if !valid_indices.contains(&chain_index) {
                 return Err(format!("Invalid chain index: {}", chain_index));
             }
-            if self.chain_sizes[chain_index] != 0 {
+            if self.board.chain_sizes[chain_index] != 0 {
                 return Err(format!("Chain {} already exists", chain_index));
             }
             let neighbors = self.grid_neighbors(*tile);
-            self.chain_sizes[chain_index] = 1 + neighbors.len();
+            self.board.chain_sizes[chain_index] = 1 + neighbors.len();
             // TODO: It's rare but possible that these neighbors also have
             // un-chained neighbors (due to the random initialization).
             // We should handle that case here before updating the grid.
-            self.grid[tile.0][tile.1] = GridCell::Chain(chain_index);
+            self.board.grid[tile.0][tile.1] = GridCell::Chain(chain_index);
             for (t, _) in neighbors {
-                self.grid[t.0][t.1] = GridCell::Chain(chain_index);
+                self.board.grid[t.0][t.1] = GridCell::Chain(chain_index);
             }
             // Founder's bonus: one free stock.
-            if self.stock_market[chain_index] > 0 {
-                self.stock_market[chain_index] -= 1;
+            if self.board.stock_market[chain_index] > 0 {
+                self.board.stock_market[chain_index] -= 1;
                 self.players[self.turn_state.player].stocks[chain_index] += 1;
             }
             self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
@@ -407,7 +411,7 @@ impl GameState {
                 .collect::<Vec<usize>>();
             // Update the grid and count additions to the winning chain.
             let mut new_hotels = 0;
-            for row in &mut self.grid {
+            for row in &mut self.board.grid {
                 for cell in row {
                     if let GridCell::Chain(idx) = cell {
                         if *idx == DUMMY_CHAIN_INDEX || loser_chains.contains(idx) {
@@ -418,7 +422,7 @@ impl GameState {
                 }
             }
             // Update the winning chain's size.
-            self.chain_sizes[chain_index] += new_hotels;
+            self.board.chain_sizes[chain_index] += new_hotels;
             self.turn_state.phase =
                 TurnPhase::ResolveMerger(chain_index, loser_chains, self.turn_state.player);
             Ok(())
@@ -440,25 +444,23 @@ impl GameState {
             if prev_stocks < num_not_kept {
                 return Err(format!(
                     "Cannot sell/trade {} stocks of {}, only have {} total.",
-                    num_not_kept,
-                    self.chain_names[loser_index],
-                    prev_stocks
+                    num_not_kept, self.board.chain_names[loser_index], prev_stocks
                 ));
             }
             // Validate that there are enough winner chain stocks to trade for.
-            if num_traded > self.stock_market[*winner_chain] {
+            if num_traded > self.board.stock_market[*winner_chain] {
                 return Err(format!(
                     "Cannot trade {} stocks of {}, market has {} available.",
                     num_traded,
-                    self.chain_names[*winner_chain],
-                    self.stock_market[*winner_chain]
+                    self.board.chain_names[*winner_chain],
+                    self.board.stock_market[*winner_chain]
                 ));
             }
 
             self.players[*selling_player].stocks[loser_index] -= num_not_kept;
             self.players[*selling_player].cash += loser_price * sell_amount;
-            self.stock_market[loser_index] += num_not_kept;
-            self.stock_market[*winner_chain] -= num_traded;
+            self.board.stock_market[loser_index] += num_not_kept;
+            self.board.stock_market[*winner_chain] -= num_traded;
             self.players[*selling_player].stocks[*winner_chain] += num_traded;
 
             // If this is the merging player's turn, distribute the merger bonuses.
@@ -469,7 +471,7 @@ impl GameState {
             let next_player = (selling_player + 1) % self.players.len();
             if next_player == self.turn_state.player {
                 // This merger is complete.
-                self.chain_sizes[loser_index] = 0;
+                self.board.chain_sizes[loser_index] = 0;
                 if loser_chains.len() > 1 {
                     // There are more mergers to resolve.
                     self.turn_state.phase = TurnPhase::ResolveMerger(
@@ -526,7 +528,7 @@ impl GameState {
         player.cash -= cash_spent;
         for (chain_index, num_stocks) in buy_order.iter().enumerate() {
             player.stocks[chain_index] += num_stocks;
-            self.stock_market[chain_index] -= num_stocks;
+            self.board.stock_market[chain_index] -= num_stocks;
         }
         self.next_player();
         Ok(())
@@ -544,16 +546,16 @@ impl GameState {
         }
 
         // Check for game over conditions.
-        let max_chain_size = *self.chain_sizes.iter().max().unwrap();
+        let chain_sizes = &self.board.chain_sizes;
+        let max_chain_size = *chain_sizes.iter().max().unwrap();
         let is_game_over = max_chain_size > 40
             || (max_chain_size >= SAFE_CHAIN_SIZE
-                && self
-                    .chain_sizes
+                && chain_sizes
                     .iter()
                     .all(|&size| size >= SAFE_CHAIN_SIZE || size == 0));
         if is_game_over {
             // Pay bonuses for each active chain.
-            for (i, &size) in self.chain_sizes.iter().enumerate() {
+            for (i, &size) in chain_sizes.iter().enumerate() {
                 if size > 0 {
                     pay_bonuses(self.stock_price(i), &mut self.players);
                 }

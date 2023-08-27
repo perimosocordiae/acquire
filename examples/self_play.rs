@@ -12,11 +12,7 @@ fn main() {
         "G".to_owned(),
     ];
     let mut rng = rand::thread_rng();
-    let mut game = GameState::new(
-        4,
-        &mut rng,
-        chain_names,
-    );
+    let mut game = GameState::new(4, &mut rng, chain_names);
 
     self_play(&mut game);
 }
