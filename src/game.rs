@@ -1,5 +1,6 @@
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 // Grid cells named from 1-A to 12-I.
 const GRID_WIDTH: usize = 12;
@@ -8,7 +9,6 @@ pub const MAX_NUM_CHAINS: usize = 7;
 const STOCKS_PER_CHAIN: usize = 25;
 const BUY_LIMIT: usize = 3;
 const SAFE_CHAIN_SIZE: usize = 11;
-const DUMMY_CHAIN_INDEX: usize = 999;
 
 // Contains (row, col) indices.
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -48,11 +48,47 @@ impl Player {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
 enum GridCell {
-    Empty,
-    Hotel,
-    Chain(usize),
+    Empty = 0,
+    Hotel = 1,
+    Chain0 = 2,
+    Chain1 = 3,
+    Chain2 = 4,
+    Chain3 = 5,
+    Chain4 = 6,
+    Chain5 = 7,
+    Chain6 = 8,
+    Dummy = 99,
+}
+impl GridCell {
+    fn from_chain_idx(chain_idx: usize) -> Self {
+        match chain_idx {
+            0 => GridCell::Chain0,
+            1 => GridCell::Chain1,
+            2 => GridCell::Chain2,
+            3 => GridCell::Chain3,
+            4 => GridCell::Chain4,
+            5 => GridCell::Chain5,
+            6 => GridCell::Chain6,
+            999 => GridCell::Dummy,
+            _ => panic!("Invalid chain index"),
+        }
+    }
+    fn to_chain_index(self) -> Option<usize> {
+        match self {
+            GridCell::Chain0 => Some(0),
+            GridCell::Chain1 => Some(1),
+            GridCell::Chain2 => Some(2),
+            GridCell::Chain3 => Some(3),
+            GridCell::Chain4 => Some(4),
+            GridCell::Chain5 => Some(5),
+            GridCell::Chain6 => Some(6),
+            GridCell::Dummy => Some(999),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -113,8 +149,10 @@ impl std::fmt::Display for BoardState {
                 match cell {
                     GridCell::Empty => write!(f, "_")?,
                     GridCell::Hotel => write!(f, "*")?,
-                    GridCell::Chain(i) => {
-                        write!(f, "{}", self.chain_names[*i].chars().next().unwrap())?
+                    GridCell::Dummy => write!(f, "X")?,
+                    _ => {
+                        let name = &self.chain_names[cell.to_chain_index().unwrap()];
+                        write!(f, "{}", name.chars().next().unwrap())?
                     }
                 }
             }
@@ -276,10 +314,7 @@ impl GameState {
         let mut neighbor_chains = self
             .grid_neighbors(tile)
             .iter()
-            .filter_map(|(_, cell)| match cell {
-                GridCell::Chain(i) => Some(*i),
-                _ => None,
-            })
+            .filter_map(|(_, cell)| cell.to_chain_index())
             .collect::<Vec<usize>>();
         // Check for new chain creation.
         if neighbor_chains.is_empty() {
@@ -327,10 +362,7 @@ impl GameState {
         // Find neighboring tiles that are part of a chain.
         let mut candidates = neighbors
             .iter()
-            .filter_map(|(_, cell)| match cell {
-                GridCell::Chain(idx) => Some(*idx),
-                _ => None,
-            })
+            .filter_map(|(_, cell)| cell.to_chain_index())
             .collect::<Vec<usize>>();
         candidates.sort_unstable();
         candidates.dedup();
@@ -351,9 +383,10 @@ impl GameState {
             1 => {
                 let chain_index = candidates[0];
                 self.board.chain_sizes[chain_index] += neighbors.len();
-                self.board.grid[tile.0][tile.1] = GridCell::Chain(chain_index);
+                let chain = GridCell::from_chain_idx(chain_index);
+                self.board.grid[tile.0][tile.1] = chain;
                 for (t, _) in neighbors {
-                    self.board.grid[t.0][t.1] = GridCell::Chain(chain_index);
+                    self.board.grid[t.0][t.1] = chain;
                 }
                 self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
             }
@@ -368,15 +401,14 @@ impl GameState {
                     .filter(|&i| self.board.chain_sizes[*i] == max_chain_size)
                     .copied()
                     .collect();
-                // Assign newly-chained hotel tiles to a dummy chain index.
+                // Assign newly-chained hotel tiles to a dummy chain.
                 // This brings adjacent non-chain hotels into the chain, even
                 // though the player may still need to decide which chain is
                 // the winner of the merger.
-                let dummy = GridCell::Chain(DUMMY_CHAIN_INDEX);
-                self.board.grid[tile.0][tile.1] = dummy;
+                self.board.grid[tile.0][tile.1] = GridCell::Dummy;
                 for (t, c) in neighbors {
                     if let GridCell::Hotel = c {
-                        self.board.grid[t.0][t.1] = dummy;
+                        self.board.grid[t.0][t.1] = GridCell::Dummy;
                     }
                 }
                 self.turn_state.phase = TurnPhase::PickWinningChain(winner_choices, candidates);
@@ -397,9 +429,10 @@ impl GameState {
             // TODO: It's rare but possible that these neighbors also have
             // un-chained neighbors (due to the random initialization).
             // We should handle that case here before updating the grid.
-            self.board.grid[tile.0][tile.1] = GridCell::Chain(chain_index);
+            let chain = GridCell::from_chain_idx(chain_index);
+            self.board.grid[tile.0][tile.1] = chain;
             for (t, _) in neighbors {
-                self.board.grid[t.0][t.1] = GridCell::Chain(chain_index);
+                self.board.grid[t.0][t.1] = chain;
             }
             // Founder's bonus: one free stock.
             if self.board.stock_market[chain_index] > 0 {
@@ -423,12 +456,16 @@ impl GameState {
                 .copied()
                 .collect::<Vec<usize>>();
             // Update the grid and count additions to the winning chain.
+            let winner_chain = GridCell::from_chain_idx(chain_index);
             let mut new_hotels = 0;
             for row in &mut self.board.grid {
                 for cell in row {
-                    if let GridCell::Chain(idx) = cell {
-                        if *idx == DUMMY_CHAIN_INDEX || loser_chains.contains(idx) {
-                            *cell = GridCell::Chain(chain_index);
+                    if *cell == GridCell::Dummy {
+                        *cell = winner_chain;
+                        new_hotels += 1;
+                    } else if let Some(idx) = cell.to_chain_index() {
+                        if loser_chains.contains(&idx) {
+                            *cell = winner_chain;
                             new_hotels += 1;
                         }
                     }
