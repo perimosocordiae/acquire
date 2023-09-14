@@ -11,7 +11,7 @@ const BUY_LIMIT: usize = 3;
 const SAFE_CHAIN_SIZE: usize = 11;
 
 // Contains (row, col) indices.
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Tile(usize, usize);
 impl std::fmt::Debug for Tile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -55,7 +55,7 @@ impl Player {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Serialize_repr, Deserialize_repr)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 enum GridCell {
     Empty = 0,
@@ -261,25 +261,7 @@ impl GameState {
         available_stocks
     }
     pub fn stock_price(&self, chain_index: usize) -> usize {
-        let chain_size = self.board.chain_sizes[chain_index];
-        let price = match chain_size {
-            0..=0 => {
-                return 0;
-            }
-            2..=6 => chain_size * 100,
-            7..=10 => 600,
-            11..=20 => 700,
-            21..=30 => 800,
-            31..=40 => 900,
-            41..=999 => 1000,
-            _ => panic!("Invalid chain size"),
-        };
-        match chain_index {
-            0..=1 => price,
-            2..=4 => price + 100,
-            5..=6 => price + 200,
-            _ => panic!("Invalid chain index"),
-        }
+        chain_stock_price(chain_index, self.board.chain_sizes[chain_index])
     }
     pub fn player_value(&self, player: usize) -> usize {
         let mut value = self.players[player].cash;
@@ -290,37 +272,14 @@ impl GameState {
         }
         value
     }
-    fn grid_neighbors(&self, tile: Tile) -> Vec<(Tile, GridCell)> {
-        let mut neighbors = Vec::new();
-        let mut maybe_push = |r: usize, c: usize| {
-            let cell = self.board.grid[r][c];
-            if cell != GridCell::Empty {
-                neighbors.push((Tile(r, c), cell));
-            }
-        };
-        if tile.0 > 0 {
-            maybe_push(tile.0 - 1, tile.1);
-        }
-        if tile.0 < GRID_HEIGHT - 1 {
-            maybe_push(tile.0 + 1, tile.1);
-        }
-        if tile.1 > 0 {
-            maybe_push(tile.0, tile.1 - 1);
-        }
-        if tile.1 < GRID_WIDTH - 1 {
-            maybe_push(tile.0, tile.1 + 1);
-        }
-        neighbors
-    }
     fn tile_playability(&self, tile: Tile) -> TilePlayability {
         // A tile cannot be played if it would merge two or more safe chains,
         // or if it would create an 8th chain.
-        let neighbors = self.grid_neighbors(tile);
+        let neighbors = grid_neighbors(tile, &self.board.grid);
         if neighbors.is_empty() {
             return TilePlayability::Playable;
         }
-        let mut neighbor_chains = self
-            .grid_neighbors(tile)
+        let mut neighbor_chains = grid_neighbors(tile, &self.board.grid)
             .iter()
             .filter_map(|(_, cell)| cell.to_chain_index())
             .collect::<Vec<usize>>();
@@ -355,7 +314,7 @@ impl GameState {
         }
         let tile = self.players[self.turn_state.player].tiles.remove(idx);
         // Check for neighboring chains or hotels.
-        let neighbors = self.grid_neighbors(tile);
+        let neighbors = grid_neighbors(tile, &self.board.grid);
         if neighbors.is_empty() {
             // Just a single hotel.
             self.board.grid[tile.0][tile.1] = GridCell::Hotel;
@@ -432,7 +391,7 @@ impl GameState {
             if self.board.chain_sizes[chain_index] != 0 {
                 return Err(format!("Chain {} already exists", chain_index));
             }
-            let neighbors = self.grid_neighbors(*tile);
+            let neighbors = grid_neighbors(*tile, &self.board.grid);
             self.board.chain_sizes[chain_index] = 1 + neighbors.len();
             // TODO: It's rare but possible that these neighbors also have
             // un-chained neighbors (due to the random initialization).
@@ -615,7 +574,7 @@ impl GameState {
             // Pay bonuses for each active chain.
             for (i, &size) in chain_sizes.iter().enumerate() {
                 if size > 0 {
-                    pay_bonuses(i, self.stock_price(i), &mut self.players);
+                    pay_bonuses(i, chain_stock_price(i, size), &mut self.players);
                 }
             }
             let final_values = (0..self.players.len())
@@ -653,25 +612,6 @@ fn distribute_bonus(bonus: usize, receiving_players: &[usize], players: &mut [Pl
     for p in receiving_players {
         players[*p].cash += amount;
     }
-}
-
-#[test]
-fn test_distribute_bonus() {
-    let mut players = [
-        Player::new(0, vec![]),
-        Player::new(100, vec![]),
-        Player::new(200, vec![]),
-    ];
-    // 1000 split 3 ways is rounded up to 400 each.
-    distribute_bonus(1000, &[0, 1, 2], &mut players);
-    assert_eq!(players[0].cash, 400);
-    assert_eq!(players[1].cash, 500);
-    assert_eq!(players[2].cash, 600);
-    // 100 to a single player.
-    distribute_bonus(100, &[0], &mut players);
-    assert_eq!(players[0].cash, 500);
-    assert_eq!(players[1].cash, 500);
-    assert_eq!(players[2].cash, 600);
 }
 
 fn pay_bonuses(stock_index: usize, stock_price: usize, players: &mut [Player]) {
@@ -713,70 +653,186 @@ fn pay_bonuses(stock_index: usize, stock_price: usize, players: &mut [Player]) {
     }
 }
 
-#[test]
-fn test_pay_bonuses_simple() {
-    let mut players = [
-        Player::new(0, vec![]),
-        Player::new(100, vec![]),
-        Player::new(200, vec![]),
-    ];
-    // Test the simple case of a single majority holder and single second place.
-    players[0].stocks[3] = 1;
-    players[1].stocks[3] = 4;
-    players[2].stocks[3] = 3;
-    pay_bonuses(3, 300, &mut players);
-    assert_eq!(players[0].cash, 0); // No bonus.
-    assert_eq!(players[1].cash, 3100); // Majority bonus is 3000.
-    assert_eq!(players[2].cash, 1700); // Second place bonus is 1500.
+fn chain_stock_price(chain_index: usize, chain_size: usize) -> usize {
+    let price = match chain_size {
+        0..=0 => {
+            return 0;
+        }
+        2..=6 => chain_size * 100,
+        7..=10 => 600,
+        11..=20 => 700,
+        21..=30 => 800,
+        31..=40 => 900,
+        41..=999 => 1000,
+        _ => panic!("Invalid chain size"),
+    };
+    match chain_index {
+        0..=1 => price,
+        2..=4 => price + 100,
+        5..=6 => price + 200,
+        _ => panic!("Invalid chain index"),
+    }
 }
 
-#[test]
-fn test_pay_bonuses_majority_tie() {
-    let mut players = [
-        Player::new(0, vec![]),
-        Player::new(100, vec![]),
-        Player::new(200, vec![]),
-    ];
-    // Tie for majority.
-    players[0].stocks[2] = 7;
-    players[1].stocks[3] = 3;
-    players[2].stocks[3] = 3;
-    pay_bonuses(3, 300, &mut players);
-    assert_eq!(players[0].cash, 0); // No bonus.
-    assert_eq!(players[1].cash, 2400); // Combined bonus: 4500 / 2 => 2300
-    assert_eq!(players[2].cash, 2500); // Combined bonus: 4500 / 2 => 2300
+fn grid_neighbors(
+    tile: Tile,
+    grid: &[[GridCell; GRID_WIDTH]; GRID_HEIGHT],
+) -> Vec<(Tile, GridCell)> {
+    let mut neighbors = Vec::new();
+    let mut maybe_push = |r: usize, c: usize| {
+        let cell = grid[r][c];
+        if cell != GridCell::Empty {
+            neighbors.push((Tile(r, c), cell));
+        }
+    };
+    if tile.0 > 0 {
+        maybe_push(tile.0 - 1, tile.1);
+    }
+    if tile.0 < GRID_HEIGHT - 1 {
+        maybe_push(tile.0 + 1, tile.1);
+    }
+    if tile.1 > 0 {
+        maybe_push(tile.0, tile.1 - 1);
+    }
+    if tile.1 < GRID_WIDTH - 1 {
+        maybe_push(tile.0, tile.1 + 1);
+    }
+    neighbors
 }
 
-#[test]
-fn test_pay_bonuses_second_place_tie() {
-    let mut players = [
-        Player::new(0, vec![]),
-        Player::new(100, vec![]),
-        Player::new(200, vec![]),
-    ];
-    // Tie for second place.
-    players[0].stocks[3] = 1;
-    players[1].stocks[3] = 3;
-    players[2].stocks[3] = 1;
-    pay_bonuses(3, 300, &mut players);
-    assert_eq!(players[0].cash, 800); // Second place: 1500 / 2 => 800
-    assert_eq!(players[1].cash, 3100); // Majority bonus is 3000.
-    assert_eq!(players[2].cash, 1000); // Second place: 1500 / 2 => 800
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[test]
-fn test_pay_bonuses_sole_majority() {
-    let mut players = [
-        Player::new(0, vec![]),
-        Player::new(100, vec![]),
-        Player::new(200, vec![]),
-    ];
-    // Only one player has any of the relevant stock.
-    players[0].stocks[1] = 0;
-    players[1].stocks[3] = 3;
-    players[2].stocks[0] = 0;
-    pay_bonuses(3, 300, &mut players);
-    assert_eq!(players[0].cash, 0); // No bonus.
-    assert_eq!(players[1].cash, 4600); // Combined bonus: 4500
-    assert_eq!(players[2].cash, 200); // No bonus.
+    #[test]
+    fn test_distribute_bonus() {
+        let mut players = [
+            Player::new(0, vec![]),
+            Player::new(100, vec![]),
+            Player::new(200, vec![]),
+        ];
+        // 1000 split 3 ways is rounded up to 400 each.
+        distribute_bonus(1000, &[0, 1, 2], &mut players);
+        assert_eq!(players[0].cash, 400);
+        assert_eq!(players[1].cash, 500);
+        assert_eq!(players[2].cash, 600);
+        // 100 to a single player.
+        distribute_bonus(100, &[0], &mut players);
+        assert_eq!(players[0].cash, 500);
+        assert_eq!(players[1].cash, 500);
+        assert_eq!(players[2].cash, 600);
+    }
+
+    #[test]
+    fn test_pay_bonuses_simple() {
+        let mut players = [
+            Player::new(0, vec![]),
+            Player::new(100, vec![]),
+            Player::new(200, vec![]),
+        ];
+        // Test the simple case of a single majority holder and single second place.
+        players[0].stocks[3] = 1;
+        players[1].stocks[3] = 4;
+        players[2].stocks[3] = 3;
+        pay_bonuses(3, 300, &mut players);
+        assert_eq!(players[0].cash, 0); // No bonus.
+        assert_eq!(players[1].cash, 3100); // Majority bonus is 3000.
+        assert_eq!(players[2].cash, 1700); // Second place bonus is 1500.
+    }
+
+    #[test]
+    fn test_pay_bonuses_majority_tie() {
+        let mut players = [
+            Player::new(0, vec![]),
+            Player::new(100, vec![]),
+            Player::new(200, vec![]),
+        ];
+        // Tie for majority.
+        players[0].stocks[2] = 7;
+        players[1].stocks[3] = 3;
+        players[2].stocks[3] = 3;
+        pay_bonuses(3, 300, &mut players);
+        assert_eq!(players[0].cash, 0); // No bonus.
+        assert_eq!(players[1].cash, 2400); // Combined bonus: 4500 / 2 => 2300
+        assert_eq!(players[2].cash, 2500); // Combined bonus: 4500 / 2 => 2300
+    }
+
+    #[test]
+    fn test_pay_bonuses_second_place_tie() {
+        let mut players = [
+            Player::new(0, vec![]),
+            Player::new(100, vec![]),
+            Player::new(200, vec![]),
+        ];
+        // Tie for second place.
+        players[0].stocks[3] = 1;
+        players[1].stocks[3] = 3;
+        players[2].stocks[3] = 1;
+        pay_bonuses(3, 300, &mut players);
+        assert_eq!(players[0].cash, 800); // Second place: 1500 / 2 => 800
+        assert_eq!(players[1].cash, 3100); // Majority bonus is 3000.
+        assert_eq!(players[2].cash, 1000); // Second place: 1500 / 2 => 800
+    }
+
+    #[test]
+    fn test_pay_bonuses_sole_majority() {
+        let mut players = [
+            Player::new(0, vec![]),
+            Player::new(100, vec![]),
+            Player::new(200, vec![]),
+        ];
+        // Only one player has any of the relevant stock.
+        players[0].stocks[1] = 0;
+        players[1].stocks[3] = 3;
+        players[2].stocks[0] = 0;
+        pay_bonuses(3, 300, &mut players);
+        assert_eq!(players[0].cash, 0); // No bonus.
+        assert_eq!(players[1].cash, 4600); // Combined bonus: 4500
+        assert_eq!(players[2].cash, 200); // No bonus.
+    }
+
+    #[test]
+    fn test_chain_stock_price() {
+        // Any chain of size 0 has a price of 0.
+        assert_eq!(chain_stock_price(0, 0), 0);
+        assert_eq!(chain_stock_price(3, 0), 0);
+        assert_eq!(chain_stock_price(6, 0), 0);
+        // Small chains scale linearly, plus some extra based on the chain index.
+        assert_eq!(chain_stock_price(0, 2), 200);
+        assert_eq!(chain_stock_price(3, 2), 300);
+        assert_eq!(chain_stock_price(6, 6), 800);
+        // Medium chains have a fixed price.
+        assert_eq!(chain_stock_price(0, 7), 600);
+        assert_eq!(chain_stock_price(0, 10), 600);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid chain size")]
+    fn test_chain_stock_price_invalid_chain_size() {
+        chain_stock_price(0, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid chain index")]
+    fn test_chain_stock_price_invalid_chain_index() {
+        chain_stock_price(99, 4);
+    }
+
+    #[test]
+    fn test_grid_neighbors() {
+        let mut grid = [[GridCell::Empty; GRID_WIDTH]; GRID_HEIGHT];
+        assert_eq!(grid_neighbors(Tile(0, 0), &grid), vec![]);
+        // One neighbor
+        grid[1][1] = GridCell::Hotel;
+        assert_eq!(
+            grid_neighbors(Tile(2, 1), &grid),
+            vec![(Tile(1, 1), GridCell::Hotel)]
+        );
+        // Two neighbors.
+        grid[3][1] = GridCell::Chain1;
+        assert_eq!(grid_neighbors(Tile(2, 1), &grid), vec![
+            (Tile(1, 1), GridCell::Hotel),
+            (Tile(3, 1), GridCell::Chain1),
+        ]);
+    }
 }
