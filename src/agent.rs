@@ -32,3 +32,47 @@ impl Agent for RandomAgent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::TurnAction;
+
+    fn make_game() -> GameState {
+        let chain_names = [
+            "K".to_owned(),
+            "L".to_owned(),
+            "M".to_owned(),
+            "N".to_owned(),
+            "O".to_owned(),
+            "P".to_owned(),
+            "Q".to_owned(),
+        ];
+        let mut rng = rand::thread_rng();
+        GameState::new(2, &mut rng, chain_names)
+    }
+
+    #[test]
+    fn test_random_agent() {
+        let mut game = make_game();
+        let ai = create_agent(0);
+        let action = ai.choose_action(&game);
+        assert!(matches!(action, TurnAction::PlaceTile(_)), "{:?}", action);
+        assert_eq!(game.take_turn(action), Ok(false));
+    }
+
+    #[test]
+    fn smoke_full_game() {
+        let mut game = make_game();
+        let ai = create_agent(0);
+        loop {
+            let action = ai.choose_action(&game);
+            if game.take_turn(action).unwrap() {
+                break;
+            }
+        }
+        // Check that asking for an action at the end of game is valid.
+        let action = ai.choose_action(&game);
+        assert!(matches!(action, TurnAction::PlaceTile(0)), "{:?}", action);
+    }
+}

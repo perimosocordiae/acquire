@@ -705,7 +705,70 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_distribute_bonus() {
+    fn tile_debug() {
+        assert_eq!(format!("{:?}", Tile(0, 0)), "1-A");
+        assert_eq!(format!("{:?}", Tile(0, 9)), "10-A");
+        assert_eq!(format!("{:?}", Tile(1, 0)), "1-B");
+        assert_eq!(format!("{:?}", Tile(9, 9)), "10-J");
+    }
+
+    #[test]
+    fn player_display() {
+        let chain_names = ["A".to_string(), "B".to_string(), "C".to_string()];
+        assert_eq!(
+            Player::new(0, vec![]).display(&chain_names),
+            "Cash: $0, Stocks: [], Tiles: []"
+        );
+        assert_eq!(
+            Player::new(500, vec![Tile(1, 1)]).display(&chain_names),
+            "Cash: $500, Stocks: [], Tiles: [2-B]"
+        );
+        let mut p = Player::new(100, vec![Tile(1, 1), Tile(2, 2)]);
+        p.stocks[1] = 13;
+        assert_eq!(
+            p.display(&chain_names),
+            "Cash: $100, Stocks: [B: 13], Tiles: [2-B, 3-C]"
+        );
+    }
+
+    #[test]
+    fn gridcell_roundtrip() {
+        for i in 0..MAX_NUM_CHAINS {
+            assert_eq!(GridCell::from_chain_idx(i).to_chain_index(), Some(i));
+        }
+        assert_eq!(
+            GridCell::from_chain_idx(GridCell::Dummy.to_chain_index().unwrap()),
+            GridCell::Dummy
+        );
+        assert_eq!(GridCell::Empty.to_chain_index(), None);
+    }
+
+    fn make_game() -> GameState {
+        let chain_names = [
+            "K".to_owned(),
+            "L".to_owned(),
+            "M".to_owned(),
+            "N".to_owned(),
+            "O".to_owned(),
+            "P".to_owned(),
+            "Q".to_owned(),
+        ];
+        let mut rng = rand::thread_rng();
+        GameState::new(2, &mut rng, chain_names)
+    }
+
+    #[test]
+    fn game_display() {
+        assert!(make_game().to_string().contains("Player 0: value = $6000"));
+    }
+
+    #[test]
+    fn game_unclaimed_tiles() {
+        assert_eq!(make_game().num_unclaimed_tiles(), 94);
+    }
+
+    #[test]
+    fn distributes_bonus() {
         let mut players = [
             Player::new(0, vec![]),
             Player::new(100, vec![]),
@@ -724,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pay_bonuses_simple() {
+    fn pay_bonuses_simple() {
         let mut players = [
             Player::new(0, vec![]),
             Player::new(100, vec![]),
@@ -741,7 +804,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pay_bonuses_majority_tie() {
+    fn pay_bonuses_majority_tie() {
         let mut players = [
             Player::new(0, vec![]),
             Player::new(100, vec![]),
@@ -758,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pay_bonuses_second_place_tie() {
+    fn pay_bonuses_second_place_tie() {
         let mut players = [
             Player::new(0, vec![]),
             Player::new(100, vec![]),
@@ -775,7 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pay_bonuses_sole_majority() {
+    fn pay_bonuses_sole_majority() {
         let mut players = [
             Player::new(0, vec![]),
             Player::new(100, vec![]),
@@ -792,7 +855,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chain_stock_price() {
+    fn computes_stock_price() {
         // Any chain of size 0 has a price of 0.
         assert_eq!(chain_stock_price(0, 0), 0);
         assert_eq!(chain_stock_price(3, 0), 0);
@@ -808,18 +871,18 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "Invalid chain size")]
-    fn test_chain_stock_price_invalid_chain_size() {
+    fn chain_stock_price_invalid_chain_size() {
         chain_stock_price(0, 1);
     }
 
     #[test]
     #[should_panic(expected = "Invalid chain index")]
-    fn test_chain_stock_price_invalid_chain_index() {
+    fn chain_stock_price_invalid_chain_index() {
         chain_stock_price(99, 4);
     }
 
     #[test]
-    fn test_grid_neighbors() {
+    fn finds_grid_neighbors() {
         let mut grid = [[GridCell::Empty; GRID_WIDTH]; GRID_HEIGHT];
         assert_eq!(grid_neighbors(Tile(0, 0), &grid), vec![]);
         // One neighbor
@@ -830,9 +893,12 @@ mod tests {
         );
         // Two neighbors.
         grid[3][1] = GridCell::Chain1;
-        assert_eq!(grid_neighbors(Tile(2, 1), &grid), vec![
-            (Tile(1, 1), GridCell::Hotel),
-            (Tile(3, 1), GridCell::Chain1),
-        ]);
+        assert_eq!(
+            grid_neighbors(Tile(2, 1), &grid),
+            vec![
+                (Tile(1, 1), GridCell::Hotel),
+                (Tile(3, 1), GridCell::Chain1),
+            ]
+        );
     }
 }
