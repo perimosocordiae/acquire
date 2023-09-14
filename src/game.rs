@@ -28,6 +28,13 @@ pub struct Player {
     pub tiles: Vec<Tile>,
 }
 impl Player {
+    fn new(cash: usize, tiles: Vec<Tile>) -> Self {
+        Self {
+            cash,
+            stocks: [0; MAX_NUM_CHAINS],
+            tiles,
+        }
+    }
     fn display(&self, chain_names: &[String]) -> String {
         format!(
             "Cash: ${}, Stocks: [{}], Tiles: [{}]",
@@ -111,10 +118,15 @@ pub enum TurnPhase {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum TurnAction {
+    // Payload: tile index.
     PlaceTile(usize),
+    // Payload: chain index.
     CreateChain(usize),
+    // Payload: chain index.
     PickWinningChain(usize),
+    // Payload: (sell amount, trade amount).
     ResolveMerger(usize, usize),
+    // Payload: stocks bought per chain.
     BuyStock([usize; MAX_NUM_CHAINS]),
 }
 
@@ -190,11 +202,7 @@ impl GameState {
             .collect::<Vec<Tile>>();
         unclaimed_tiles.shuffle(rng);
         let players = (0..num_players)
-            .map(|_| Player {
-                cash: 6000,
-                stocks: [0; MAX_NUM_CHAINS],
-                tiles: unclaimed_tiles.split_off(unclaimed_tiles.len() - 6),
-            })
+            .map(|_| Player::new(6000, unclaimed_tiles.split_off(unclaimed_tiles.len() - 6)))
             .collect();
         let mut grid = [[GridCell::Empty; GRID_WIDTH]; GRID_HEIGHT];
         for t in unclaimed_tiles.drain(unclaimed_tiles.len() - num_players..) {
@@ -515,7 +523,7 @@ impl GameState {
 
             // If this is the merging player's turn, distribute the merger bonuses.
             if *selling_player == self.turn_state.player {
-                pay_bonuses(loser_price, &mut self.players);
+                pay_bonuses(loser_index, loser_price, &mut self.players);
             }
 
             let next_player = (selling_player + 1) % self.players.len();
@@ -607,7 +615,7 @@ impl GameState {
             // Pay bonuses for each active chain.
             for (i, &size) in chain_sizes.iter().enumerate() {
                 if size > 0 {
-                    pay_bonuses(self.stock_price(i), &mut self.players);
+                    pay_bonuses(i, self.stock_price(i), &mut self.players);
                 }
             }
             let final_values = (0..self.players.len())
@@ -647,13 +655,33 @@ fn distribute_bonus(bonus: usize, receiving_players: &[usize], players: &mut [Pl
     }
 }
 
-fn pay_bonuses(stock_price: usize, players: &mut [Player]) {
+#[test]
+fn test_distribute_bonus() {
+    let mut players = [
+        Player::new(0, vec![]),
+        Player::new(100, vec![]),
+        Player::new(200, vec![]),
+    ];
+    // 1000 split 3 ways is rounded up to 400 each.
+    distribute_bonus(1000, &[0, 1, 2], &mut players);
+    assert_eq!(players[0].cash, 400);
+    assert_eq!(players[1].cash, 500);
+    assert_eq!(players[2].cash, 600);
+    // 100 to a single player.
+    distribute_bonus(100, &[0], &mut players);
+    assert_eq!(players[0].cash, 500);
+    assert_eq!(players[1].cash, 500);
+    assert_eq!(players[2].cash, 600);
+}
+
+fn pay_bonuses(stock_index: usize, stock_price: usize, players: &mut [Player]) {
     let majority_bonus = stock_price * 10;
     let second_bonus = majority_bonus / 2;
+    // Sort players by how many of this stock they have.
     let mut holdings: Vec<(usize, usize)> = players
         .iter()
         .enumerate()
-        .map(|(i, p)| (p.stocks[i], i))
+        .map(|(i, p)| (p.stocks[stock_index], i))
         .collect();
     holdings.sort_unstable();
     holdings.reverse();
@@ -683,4 +711,72 @@ fn pay_bonuses(stock_price: usize, players: &mut [Player]) {
             distribute_bonus(second_bonus, &second_players, players);
         }
     }
+}
+
+#[test]
+fn test_pay_bonuses_simple() {
+    let mut players = [
+        Player::new(0, vec![]),
+        Player::new(100, vec![]),
+        Player::new(200, vec![]),
+    ];
+    // Test the simple case of a single majority holder and single second place.
+    players[0].stocks[3] = 1;
+    players[1].stocks[3] = 4;
+    players[2].stocks[3] = 3;
+    pay_bonuses(3, 300, &mut players);
+    assert_eq!(players[0].cash, 0); // No bonus.
+    assert_eq!(players[1].cash, 3100); // Majority bonus is 3000.
+    assert_eq!(players[2].cash, 1700); // Second place bonus is 1500.
+}
+
+#[test]
+fn test_pay_bonuses_majority_tie() {
+    let mut players = [
+        Player::new(0, vec![]),
+        Player::new(100, vec![]),
+        Player::new(200, vec![]),
+    ];
+    // Tie for majority.
+    players[0].stocks[2] = 7;
+    players[1].stocks[3] = 3;
+    players[2].stocks[3] = 3;
+    pay_bonuses(3, 300, &mut players);
+    assert_eq!(players[0].cash, 0); // No bonus.
+    assert_eq!(players[1].cash, 2400); // Combined bonus: 4500 / 2 => 2300
+    assert_eq!(players[2].cash, 2500); // Combined bonus: 4500 / 2 => 2300
+}
+
+#[test]
+fn test_pay_bonuses_second_place_tie() {
+    let mut players = [
+        Player::new(0, vec![]),
+        Player::new(100, vec![]),
+        Player::new(200, vec![]),
+    ];
+    // Tie for second place.
+    players[0].stocks[3] = 1;
+    players[1].stocks[3] = 3;
+    players[2].stocks[3] = 1;
+    pay_bonuses(3, 300, &mut players);
+    assert_eq!(players[0].cash, 800); // Second place: 1500 / 2 => 800
+    assert_eq!(players[1].cash, 3100); // Majority bonus is 3000.
+    assert_eq!(players[2].cash, 1000); // Second place: 1500 / 2 => 800
+}
+
+#[test]
+fn test_pay_bonuses_sole_majority() {
+    let mut players = [
+        Player::new(0, vec![]),
+        Player::new(100, vec![]),
+        Player::new(200, vec![]),
+    ];
+    // Only one player has any of the relevant stock.
+    players[0].stocks[1] = 0;
+    players[1].stocks[3] = 3;
+    players[2].stocks[0] = 0;
+    pay_bonuses(3, 300, &mut players);
+    assert_eq!(players[0].cash, 0); // No bonus.
+    assert_eq!(players[1].cash, 4600); // Combined bonus: 4500
+    assert_eq!(players[2].cash, 200); // No bonus.
 }
