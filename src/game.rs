@@ -122,7 +122,7 @@ pub enum TurnPhase {
     GameOver(Vec<usize>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum TurnAction {
     // Payload: tile index.
     PlaceTile(usize),
