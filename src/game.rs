@@ -25,7 +25,7 @@ impl std::fmt::Debug for Tile {
 pub struct Player {
     pub cash: usize,
     stocks: [usize; MAX_NUM_CHAINS],
-    pub tiles: Vec<Tile>,
+    tiles: Vec<Tile>,
 }
 impl Player {
     fn new(cash: usize, tiles: Vec<Tile>) -> Self {
@@ -52,6 +52,12 @@ impl Player {
                 .collect::<Vec<String>>()
                 .join(", ")
         )
+    }
+    pub fn total_shares(&self) -> usize {
+        self.stocks.iter().sum()
+    }
+    pub fn num_tiles(&self) -> usize {
+        self.tiles.len()
     }
 }
 

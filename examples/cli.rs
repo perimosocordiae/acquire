@@ -51,14 +51,8 @@ fn handle_turn(
     input: &mut String,
 ) -> Result<Option<TurnAction>, Box<dyn Error>> {
     match &game.turn_state.phase {
-        TurnPhase::PlaceTile(tile_inds) => {
+        TurnPhase::PlaceTile(_) => {
             println!("Choose a tile (index) to play, or 'q' to quit:");
-            for idx in tile_inds {
-                println!(
-                    "{}: {:?}",
-                    idx, game.players[game.turn_state.player].tiles[*idx]
-                );
-            }
         }
         TurnPhase::CreateChain(_, chain_inds) => {
             println!("Choose a chain (index) to create, or 'q' to quit:");
