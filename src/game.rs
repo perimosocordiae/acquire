@@ -211,8 +211,20 @@ impl GameState {
             .map(|_| Player::new(6000, unclaimed_tiles.split_off(unclaimed_tiles.len() - 6)))
             .collect();
         let mut grid = [[GridCell::Empty; GRID_WIDTH]; GRID_HEIGHT];
-        for t in unclaimed_tiles.drain(unclaimed_tiles.len() - num_players..) {
-            grid[t.0][t.1] = GridCell::Hotel;
+        // Add random non-adjacent tiles to the grid.
+        {
+            let mut num_added = 0;
+            let mut tmp_tiles = Vec::new();
+            while num_added < num_players {
+                let tile = unclaimed_tiles.pop().unwrap();
+                if grid_neighbors(tile, &grid).is_empty() {
+                    grid[tile.0][tile.1] = GridCell::Hotel;
+                    num_added += 1;
+                } else {
+                    tmp_tiles.push(tile);
+                }
+            }
+            unclaimed_tiles.append(&mut tmp_tiles);
         }
         let board = BoardState {
             grid,
@@ -399,9 +411,6 @@ impl GameState {
             }
             let neighbors = grid_neighbors(*tile, &self.board.grid);
             self.board.chain_sizes[chain_index] = 1 + neighbors.len();
-            // TODO: It's rare but possible that these neighbors also have
-            // un-chained neighbors (due to the random initialization).
-            // We should handle that case here before updating the grid.
             let chain = GridCell::from_chain_idx(chain_index);
             self.board.grid[tile.0][tile.1] = chain;
             for (t, _) in neighbors {
