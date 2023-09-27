@@ -7,8 +7,13 @@ pub trait Agent {
     fn choose_action(&self, game: &GameState) -> TurnAction;
 }
 
-pub fn create_agent(_difficulty: usize) -> Box<dyn Agent + Send> {
-    Box::<RandomAgent>::default()
+pub fn create_agent(difficulty: usize) -> Box<dyn Agent + Send> {
+    match difficulty {
+        // Random (valid) actions.
+        0 => Box::<RandomAgent>::default(),
+        // Simple heuristics on top of random actions.
+        _ => Box::<BasicAgent>::default(),
+    }
 }
 
 #[derive(Default)]
@@ -31,7 +36,7 @@ impl Agent for RandomAgent {
             }
             TurnPhase::ResolveMerger(_winner_idx, loser_inds, player_idx) => {
                 let loser_idx = loser_inds[0];
-                let loser_shares = game.players[*player_idx].num_shares(loser_idx);
+                let loser_shares = game.players[*player_idx].stocks[loser_idx];
                 // TODO: Enable trading shares as well as selling them.
                 let num_sold = rng.gen_range(0..=loser_shares);
                 TurnAction::ResolveMerger(num_sold, 0)
@@ -63,6 +68,36 @@ impl Agent for RandomAgent {
                 TurnAction::BuyStock(buy_order)
             }
             TurnPhase::GameOver(_) => TurnAction::PlaceTile(0),
+        }
+    }
+}
+
+fn chain_with_most_shares(game: &GameState, chain_inds: &[usize]) -> usize {
+    let my_stocks = &game.players[game.turn_state.player].stocks;
+    *chain_inds.iter().max_by_key(|&&i| my_stocks[i]).unwrap()
+}
+
+#[derive(Default)]
+struct BasicAgent;
+impl Agent for BasicAgent {
+    fn choose_action(&self, game: &GameState) -> TurnAction {
+        match &game.turn_state.phase {
+            TurnPhase::PlaceTile(tile_inds) => {
+                let my_tiles = &game.players[game.turn_state.player].tiles;
+                // Place the tile that has the most neighbors.
+                let best_idx = tile_inds
+                    .iter()
+                    .max_by_key(|&&i| game.board.num_neighbors(my_tiles[i]))
+                    .unwrap();
+                TurnAction::PlaceTile(*best_idx)
+            }
+            TurnPhase::CreateChain(_, chain_inds) => {
+                TurnAction::CreateChain(chain_with_most_shares(game, chain_inds))
+            }
+            TurnPhase::PickWinningChain(choices, _) => {
+                TurnAction::PickWinningChain(chain_with_most_shares(game, choices))
+            }
+            _ => RandomAgent.choose_action(game),
         }
     }
 }

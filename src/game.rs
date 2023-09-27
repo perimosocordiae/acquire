@@ -24,8 +24,8 @@ impl std::fmt::Debug for Tile {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Player {
     pub cash: usize,
-    stocks: [usize; MAX_NUM_CHAINS],
-    tiles: Vec<Tile>,
+    pub stocks: [usize; MAX_NUM_CHAINS],
+    pub tiles: Vec<Tile>,
 }
 impl Player {
     fn new(cash: usize, tiles: Vec<Tile>) -> Self {
@@ -55,9 +55,6 @@ impl Player {
     }
     pub fn total_shares(&self) -> usize {
         self.stocks.iter().sum()
-    }
-    pub fn num_shares(&self, chain_index: usize) -> usize {
-        self.stocks[chain_index]
     }
     pub fn num_tiles(&self) -> usize {
         self.tiles.len()
@@ -183,6 +180,11 @@ impl std::fmt::Display for BoardState {
         writeln!(f, "Chain sizes: {:?}", self.chain_sizes)
     }
 }
+impl BoardState {
+    pub fn num_neighbors(&self, tile: Tile) -> usize {
+        grid_neighbors(tile, &self.grid).len()
+    }
+}
 
 pub struct GameState {
     pub board: BoardState,
@@ -300,7 +302,7 @@ impl GameState {
         if neighbors.is_empty() {
             return TilePlayability::Playable;
         }
-        let mut neighbor_chains = grid_neighbors(tile, &self.board.grid)
+        let mut neighbor_chains = neighbors
             .iter()
             .filter_map(|(_, cell)| cell.to_chain_index())
             .collect::<Vec<usize>>();
