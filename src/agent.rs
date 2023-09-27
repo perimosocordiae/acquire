@@ -1,4 +1,5 @@
 use rand::seq::SliceRandom;
+use rand::Rng;
 
 use crate::game::{GameState, TurnAction, TurnPhase, MAX_NUM_CHAINS};
 
@@ -31,8 +32,9 @@ impl Agent for RandomAgent {
             TurnPhase::ResolveMerger(_winner_idx, loser_inds, player_idx) => {
                 let loser_idx = loser_inds[0];
                 let loser_shares = game.players[*player_idx].num_shares(loser_idx);
-                // TODO: Randomize this.
-                TurnAction::ResolveMerger(loser_shares, 0)
+                // TODO: Enable trading shares as well as selling them.
+                let num_sold = rng.gen_range(0..=loser_shares);
+                TurnAction::ResolveMerger(num_sold, 0)
             }
             TurnPhase::BuyStock(buyable_amounts) => {
                 let my_cash = game.players[game.turn_state.player].cash;
