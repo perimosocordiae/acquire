@@ -56,6 +56,9 @@ impl Player {
     pub fn total_shares(&self) -> usize {
         self.stocks.iter().sum()
     }
+    pub fn num_shares(&self, chain_index: usize) -> usize {
+        self.stocks[chain_index]
+    }
     pub fn num_tiles(&self) -> usize {
         self.tiles.len()
     }

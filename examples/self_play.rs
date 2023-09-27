@@ -1,6 +1,6 @@
-use clap::Parser;
 use acquire::agent;
 use acquire::game::{GameState, TurnPhase};
+use clap::Parser;
 
 #[derive(Parser)]
 struct Args {
@@ -28,7 +28,11 @@ fn main() {
     let num_players = args.agents.len();
     for game_idx in 0..args.games {
         let mut game = GameState::new(num_players, &mut rng, chain_names.clone());
-        let agents = args.agents.iter().map(|&i| agent::create_agent(i)).collect::<Vec<_>>();
+        let agents = args
+            .agents
+            .iter()
+            .map(|&i| agent::create_agent(i))
+            .collect::<Vec<_>>();
         loop {
             let ai = &agents[player_idx(&game)];
             let action = ai.choose_action(&game);
@@ -39,7 +43,14 @@ fn main() {
         if args.verbose {
             println!("Game {}:\n{}", game_idx, game);
         } else if let TurnPhase::GameOver(scores) = game.turn_state.phase {
-            println!("{}", scores.into_iter().map(|s| s.to_string()).collect::<Vec<_>>().join(","));
+            println!(
+                "{}",
+                scores
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
         }
     }
 }
