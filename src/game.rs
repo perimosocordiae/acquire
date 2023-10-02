@@ -372,11 +372,14 @@ impl GameState {
             // Joining an existing chain.
             1 => {
                 let chain_index = candidates[0];
-                self.board.chain_sizes[chain_index] += neighbors.len();
                 let chain = GridCell::from_chain_idx(chain_index);
                 self.board.grid[tile.0][tile.1] = chain;
-                for (t, _) in neighbors {
-                    self.board.grid[t.0][t.1] = chain;
+                self.board.chain_sizes[chain_index] += 1;
+                for (t, cell) in neighbors {
+                    if let GridCell::Hotel = cell {
+                        self.board.grid[t.0][t.1] = chain;
+                        self.board.chain_sizes[chain_index] += 1;
+                    }
                 }
                 self.turn_state.phase = TurnPhase::BuyStock(self.available_stocks());
             }
