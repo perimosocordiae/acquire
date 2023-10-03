@@ -463,6 +463,20 @@ impl GameState {
             }
             // Update the winning chain's size.
             self.board.chain_sizes[chain_index] += new_hotels;
+
+            // TODO: Make a new TurnPhase::DistributeBonuses to handle this.
+            // Each chain is handled one at a time, so we should have:
+            // DistributeBonuses, ResolveMerger (xN players), then back to
+            // DistributeBonuses and repeat for all losing chains.
+
+            // Pay bonuses to players who have stocks in the losing chains.
+            let mut bonus_cash = vec![0; self.players.len()];
+            for idx in loser_chains.iter() {
+                pay_bonuses(*idx, self.stock_price(*idx), &self.players, &mut bonus_cash);
+            }
+            for (i, &bonus) in bonus_cash.iter().enumerate() {
+                self.players[i].cash += bonus;
+            }
             self.turn_state.phase =
                 TurnPhase::ResolveMerger(chain_index, loser_chains, self.turn_state.player);
             Ok(())
@@ -502,11 +516,6 @@ impl GameState {
             self.board.stock_market[loser_index] += num_not_kept;
             self.board.stock_market[*winner_chain] -= num_traded;
             self.players[*selling_player].stocks[*winner_chain] += num_traded;
-
-            // If this is the merging player's turn, distribute the merger bonuses.
-            if *selling_player == self.turn_state.player {
-                pay_bonuses(loser_index, loser_price, &mut self.players);
-            }
 
             let next_player = (selling_player + 1) % self.players.len();
             if next_player == self.turn_state.player {
@@ -595,10 +604,19 @@ impl GameState {
                     .all(|&size| size >= SAFE_CHAIN_SIZE || size == 0));
         if is_game_over {
             // Pay bonuses for each active chain.
+            let mut bonus_cash = vec![0; self.players.len()];
             for (i, &size) in chain_sizes.iter().enumerate() {
                 if size > 0 {
-                    pay_bonuses(i, chain_stock_price(i, size), &mut self.players);
+                    pay_bonuses(
+                        i,
+                        chain_stock_price(i, size),
+                        &self.players,
+                        &mut bonus_cash,
+                    );
                 }
+            }
+            for (i, &bonus) in bonus_cash.iter().enumerate() {
+                self.players[i].cash += bonus;
             }
             let final_values = (0..self.players.len())
                 .map(|i| self.player_value(i))
@@ -626,18 +644,23 @@ impl GameState {
     }
 }
 
-fn distribute_bonus(bonus: usize, receiving_players: &[usize], players: &mut [Player]) {
+fn distribute_bonus(bonus: usize, receiving_players: &[usize], cash: &mut [usize]) {
     let mut amount = bonus / receiving_players.len();
     // Round up to the nearest 100.
     if amount % 100 != 0 {
         amount += 100 - (amount % 100);
     }
     for p in receiving_players {
-        players[*p].cash += amount;
+        cash[*p] += amount;
     }
 }
 
-fn pay_bonuses(stock_index: usize, stock_price: usize, players: &mut [Player]) {
+fn pay_bonuses(
+    stock_index: usize,
+    stock_price: usize,
+    players: &[Player],
+    cash_gained: &mut [usize],
+) {
     let majority_bonus = stock_price * 10;
     let second_bonus = majority_bonus / 2;
     // Sort players by how many of this stock they have.
@@ -656,22 +679,26 @@ fn pay_bonuses(stock_index: usize, stock_price: usize, players: &mut [Player]) {
         .collect();
     if majority_players.len() > 1 {
         // Bonuses are summed in the case of a tie for first place.
-        distribute_bonus(majority_bonus + second_bonus, &majority_players, players);
+        distribute_bonus(
+            majority_bonus + second_bonus,
+            &majority_players,
+            cash_gained,
+        );
     } else {
         let majority_player = majority_players[0];
-        players[majority_player].cash += majority_bonus;
+        cash_gained[majority_player] += majority_bonus;
         let second_held = holdings[1].0;
         // If the majority holder is the only holder, give them
         // the second bonus as well.
         if second_held == 0 {
-            players[majority_player].cash += second_bonus;
+            cash_gained[majority_player] += second_bonus;
         } else {
             let second_players: Vec<usize> = holdings
                 .iter()
                 .filter(|(held, _)| *held == second_held)
                 .map(|(_, i)| *i)
                 .collect();
-            distribute_bonus(second_bonus, &second_players, players);
+            distribute_bonus(second_bonus, &second_players, cash_gained);
         }
     }
 }
@@ -792,21 +819,13 @@ mod tests {
 
     #[test]
     fn distributes_bonus() {
-        let mut players = [
-            Player::new(0, vec![]),
-            Player::new(100, vec![]),
-            Player::new(200, vec![]),
-        ];
+        let mut cash = [0; 3];
         // 1000 split 3 ways is rounded up to 400 each.
-        distribute_bonus(1000, &[0, 1, 2], &mut players);
-        assert_eq!(players[0].cash, 400);
-        assert_eq!(players[1].cash, 500);
-        assert_eq!(players[2].cash, 600);
+        distribute_bonus(1000, &[0, 1, 2], &mut cash);
+        assert_eq!(cash, [400, 400, 400]);
         // 100 to a single player.
-        distribute_bonus(100, &[0], &mut players);
-        assert_eq!(players[0].cash, 500);
-        assert_eq!(players[1].cash, 500);
-        assert_eq!(players[2].cash, 600);
+        distribute_bonus(100, &[0], &mut cash);
+        assert_eq!(cash, [500, 400, 400]);
     }
 
     #[test]
@@ -820,10 +839,11 @@ mod tests {
         players[0].stocks[3] = 1;
         players[1].stocks[3] = 4;
         players[2].stocks[3] = 3;
-        pay_bonuses(3, 300, &mut players);
-        assert_eq!(players[0].cash, 0); // No bonus.
-        assert_eq!(players[1].cash, 3100); // Majority bonus is 3000.
-        assert_eq!(players[2].cash, 1700); // Second place bonus is 1500.
+        let mut cash = vec![0; players.len()];
+        pay_bonuses(3, 300, &players, &mut cash);
+        assert_eq!(cash[0], 0); // No bonus.
+        assert_eq!(cash[1], 3000); // Majority bonus is 3000.
+        assert_eq!(cash[2], 1500); // Second place bonus is 1500.
     }
 
     #[test]
@@ -837,10 +857,11 @@ mod tests {
         players[0].stocks[2] = 7;
         players[1].stocks[3] = 3;
         players[2].stocks[3] = 3;
-        pay_bonuses(3, 300, &mut players);
-        assert_eq!(players[0].cash, 0); // No bonus.
-        assert_eq!(players[1].cash, 2400); // Combined bonus: 4500 / 2 => 2300
-        assert_eq!(players[2].cash, 2500); // Combined bonus: 4500 / 2 => 2300
+        let mut cash = vec![0; players.len()];
+        pay_bonuses(3, 300, &players, &mut cash);
+        assert_eq!(cash[0], 0); // No bonus.
+        assert_eq!(cash[1], 2300); // Combined bonus: 4500 / 2 => 2300
+        assert_eq!(cash[2], 2300); // Combined bonus: 4500 / 2 => 2300
     }
 
     #[test]
@@ -854,10 +875,11 @@ mod tests {
         players[0].stocks[3] = 1;
         players[1].stocks[3] = 3;
         players[2].stocks[3] = 1;
-        pay_bonuses(3, 300, &mut players);
-        assert_eq!(players[0].cash, 800); // Second place: 1500 / 2 => 800
-        assert_eq!(players[1].cash, 3100); // Majority bonus is 3000.
-        assert_eq!(players[2].cash, 1000); // Second place: 1500 / 2 => 800
+        let mut cash = vec![0; players.len()];
+        pay_bonuses(3, 300, &players, &mut cash);
+        assert_eq!(cash[0], 800); // Second place: 1500 / 2 => 800
+        assert_eq!(cash[1], 3000); // Majority bonus is 3000.
+        assert_eq!(cash[2], 800); // Second place: 1500 / 2 => 800
     }
 
     #[test]
@@ -871,10 +893,11 @@ mod tests {
         players[0].stocks[1] = 0;
         players[1].stocks[3] = 3;
         players[2].stocks[0] = 0;
-        pay_bonuses(3, 300, &mut players);
-        assert_eq!(players[0].cash, 0); // No bonus.
-        assert_eq!(players[1].cash, 4600); // Combined bonus: 4500
-        assert_eq!(players[2].cash, 200); // No bonus.
+        let mut cash = vec![0; players.len()];
+        pay_bonuses(3, 300, &players, &mut cash);
+        assert_eq!(cash[0], 0); // No bonus.
+        assert_eq!(cash[1], 4500); // Combined bonus: 4500
+        assert_eq!(cash[2], 0); // No bonus.
     }
 
     #[test]
