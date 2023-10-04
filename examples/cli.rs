@@ -13,15 +13,24 @@ fn main() {
     ];
     let mut rng = rand::thread_rng();
     let mut game = GameState::new(4, &mut rng, chain_names);
+    print!("{}", game);
 
     // Super-janky CLI for testing.
     let mut input = String::new();
     loop {
-        print!("{}", game);
         match handle_turn(&mut game, &mut input) {
-            Ok(Some(action)) => {
-                game.take_turn(action).unwrap();
-            }
+            Ok(Some(action)) => match game.take_turn(action) {
+                Ok(true) => {
+                    println!("Game over!");
+                    break;
+                }
+                Ok(false) => {
+                    print!("\n{}", game);
+                }
+                Err(e) => {
+                    println!("Error: {}", e);
+                }
+            },
             Ok(None) => {
                 break;
             }
@@ -70,6 +79,14 @@ fn handle_turn(
                 }
             }
         }
+        TurnPhase::DistributeBonuses(_, chains, bonus_cash) => {
+            println!(
+                "Merging chain {} awards bonus cash: {:?}",
+                chain_name(chains[0]),
+                bonus_cash
+            );
+            println!("Press enter to continue, or 'q' to quit:")
+        }
         TurnPhase::ResolveMerger(_, chains, player_idx) => {
             println!(
                 "Player {}: Choose 'sell,trade' amounts of {} stock, or 'q' to quit:",
@@ -107,10 +124,11 @@ fn handle_turn(
             let chain_idx = if choices.len() > 1 {
                 input.trim().parse::<usize>()?
             } else {
-                0
+                choices[0]
             };
             TurnAction::PickWinningChain(chain_idx)
         }
+        TurnPhase::DistributeBonuses(_, _, _) => TurnAction::AcceptBonus,
         TurnPhase::ResolveMerger(_, _, _) => {
             let mut sell_trade = [0, 0];
             for (i, s) in input.trim().split(',').enumerate() {

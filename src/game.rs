@@ -9,6 +9,7 @@ pub const MAX_NUM_CHAINS: usize = 7;
 const STOCKS_PER_CHAIN: usize = 25;
 const BUY_LIMIT: usize = 3;
 const SAFE_CHAIN_SIZE: usize = 11;
+const DUMMY_CHAIN_INDEX: usize = 999;
 
 // Contains (row, col) indices.
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -85,7 +86,7 @@ impl GridCell {
             4 => GridCell::Chain4,
             5 => GridCell::Chain5,
             6 => GridCell::Chain6,
-            999 => GridCell::Dummy,
+            DUMMY_CHAIN_INDEX => GridCell::Dummy,
             _ => panic!("Invalid chain index"),
         }
     }
@@ -98,7 +99,7 @@ impl GridCell {
             GridCell::Chain4 => Some(4),
             GridCell::Chain5 => Some(5),
             GridCell::Chain6 => Some(6),
-            GridCell::Dummy => Some(999),
+            GridCell::Dummy => Some(DUMMY_CHAIN_INDEX),
             _ => None,
         }
     }
@@ -113,6 +114,9 @@ pub enum TurnPhase {
     // 2+ existing chains are merging.
     // Payload: (choices for the winning chain, all merging chains).
     PickWinningChain(Vec<usize>, Vec<usize>),
+    // Chain merger bonuses are being distributed.
+    // Payload: (winning chain, remaining chains to merge, bonus amounts)
+    DistributeBonuses(usize, Vec<usize>, Vec<usize>),
     // Post-merger stock disposal.
     // Payload: (winning chain, remaining chains to merge, player idx)
     ResolveMerger(usize, Vec<usize>, usize),
@@ -130,6 +134,8 @@ pub enum TurnAction {
     CreateChain(usize),
     // Payload: chain index.
     PickWinningChain(usize),
+    // No payload.
+    AcceptBonus,
     // Payload: (sell amount, trade amount).
     ResolveMerger(usize, usize),
     // Payload: stocks bought per chain.
@@ -269,6 +275,7 @@ impl GameState {
             TurnAction::PlaceTile(idx) => self.place_tile(idx),
             TurnAction::CreateChain(idx) => self.create_chain(idx),
             TurnAction::PickWinningChain(idx) => self.pick_winning_chain(idx),
+            TurnAction::AcceptBonus => self.award_bonuses(),
             TurnAction::ResolveMerger(sell, trade) => self.resolve_merger(sell, trade),
             TurnAction::BuyStock(stocks) => self.buy_stock(stocks),
         }?;
@@ -464,21 +471,48 @@ impl GameState {
             // Update the winning chain's size.
             self.board.chain_sizes[chain_index] += new_hotels;
 
-            // TODO: Make a new TurnPhase::DistributeBonuses to handle this.
-            // Each chain is handled one at a time, so we should have:
-            // DistributeBonuses, ResolveMerger (xN players), then back to
-            // DistributeBonuses and repeat for all losing chains.
-
             // Pay bonuses to players who have stocks in the losing chains.
-            let mut bonus_cash = vec![0; self.players.len()];
-            for idx in loser_chains.iter() {
-                pay_bonuses(*idx, self.stock_price(*idx), &self.players, &mut bonus_cash);
-            }
+            let idx = loser_chains[0];
+            let bonus_cash = calculate_bonuses(idx, self.stock_price(idx), &self.players);
+            self.turn_state.phase =
+                TurnPhase::DistributeBonuses(chain_index, loser_chains, bonus_cash);
+            Ok(())
+        } else {
+            Err(format!("Wrong phase: {:?}", self.turn_state.phase))
+        }
+    }
+    fn award_bonuses(&mut self) -> Result<(), String> {
+        if let TurnPhase::DistributeBonuses(winner_chain, loser_chains, bonus_cash) =
+            &self.turn_state.phase
+        {
+            // Deposit the bonus for each player.
             for (i, &bonus) in bonus_cash.iter().enumerate() {
                 self.players[i].cash += bonus;
             }
-            self.turn_state.phase =
-                TurnPhase::ResolveMerger(chain_index, loser_chains, self.turn_state.player);
+            if *winner_chain == DUMMY_CHAIN_INDEX {
+                // It's the end of the game.
+                if loser_chains.len() > 1 {
+                    // More bonuses to award.
+                    let idx = loser_chains[1];
+                    self.turn_state.phase = TurnPhase::DistributeBonuses(
+                        DUMMY_CHAIN_INDEX,
+                        loser_chains[1..].to_vec(),
+                        calculate_bonuses(idx, self.stock_price(idx), &self.players),
+                    );
+                } else {
+                    let final_values = (0..self.players.len())
+                        .map(|i| self.player_value(i))
+                        .collect();
+                    self.turn_state.phase = TurnPhase::GameOver(final_values);
+                }
+            } else {
+                // Ask the player to sell/trade shares of the first losing chain.
+                self.turn_state.phase = TurnPhase::ResolveMerger(
+                    *winner_chain,
+                    loser_chains.to_vec(),
+                    self.turn_state.player,
+                );
+            }
             Ok(())
         } else {
             Err(format!("Wrong phase: {:?}", self.turn_state.phase))
@@ -523,10 +557,11 @@ impl GameState {
                 self.board.chain_sizes[loser_index] = 0;
                 if loser_chains.len() > 1 {
                     // There are more mergers to resolve.
-                    self.turn_state.phase = TurnPhase::ResolveMerger(
+                    let idx = loser_chains[1];
+                    self.turn_state.phase = TurnPhase::DistributeBonuses(
                         *winner_chain,
                         loser_chains[1..].to_vec(),
-                        next_player,
+                        calculate_bonuses(idx, self.stock_price(idx), &self.players),
                     );
                 } else {
                     // All mergers are resolved, move on to the buy phase.
@@ -604,24 +639,16 @@ impl GameState {
                     .all(|&size| size >= SAFE_CHAIN_SIZE || size == 0));
         if is_game_over {
             // Pay bonuses for each active chain.
-            let mut bonus_cash = vec![0; self.players.len()];
-            for (i, &size) in chain_sizes.iter().enumerate() {
-                if size > 0 {
-                    pay_bonuses(
-                        i,
-                        chain_stock_price(i, size),
-                        &self.players,
-                        &mut bonus_cash,
-                    );
-                }
-            }
-            for (i, &bonus) in bonus_cash.iter().enumerate() {
-                self.players[i].cash += bonus;
-            }
-            let final_values = (0..self.players.len())
-                .map(|i| self.player_value(i))
-                .collect();
-            self.turn_state.phase = TurnPhase::GameOver(final_values);
+            let active_chains = chain_sizes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &size)| if size > 0 { Some(i) } else { None })
+                .collect::<Vec<usize>>();
+            let idx = active_chains[0];
+            let bonus_cash =
+                calculate_bonuses(idx, chain_stock_price(idx, chain_sizes[idx]), &self.players);
+            self.turn_state.phase =
+                TurnPhase::DistributeBonuses(DUMMY_CHAIN_INDEX, active_chains, bonus_cash);
             return;
         }
 
@@ -655,12 +682,8 @@ fn distribute_bonus(bonus: usize, receiving_players: &[usize], cash: &mut [usize
     }
 }
 
-fn pay_bonuses(
-    stock_index: usize,
-    stock_price: usize,
-    players: &[Player],
-    cash_gained: &mut [usize],
-) {
+// Given a stock and its price, calculate the bonuses to be awarded to players.
+fn calculate_bonuses(stock_index: usize, stock_price: usize, players: &[Player]) -> Vec<usize> {
     let majority_bonus = stock_price * 10;
     let second_bonus = majority_bonus / 2;
     // Sort players by how many of this stock they have.
@@ -677,12 +700,13 @@ fn pay_bonuses(
         .filter(|(held, _)| *held == max_held)
         .map(|(_, i)| *i)
         .collect();
+    let mut cash_gained = vec![0; players.len()];
     if majority_players.len() > 1 {
         // Bonuses are summed in the case of a tie for first place.
         distribute_bonus(
             majority_bonus + second_bonus,
             &majority_players,
-            cash_gained,
+            &mut cash_gained,
         );
     } else {
         let majority_player = majority_players[0];
@@ -698,9 +722,10 @@ fn pay_bonuses(
                 .filter(|(held, _)| *held == second_held)
                 .map(|(_, i)| *i)
                 .collect();
-            distribute_bonus(second_bonus, &second_players, cash_gained);
+            distribute_bonus(second_bonus, &second_players, &mut cash_gained);
         }
     }
+    cash_gained
 }
 
 fn chain_stock_price(chain_index: usize, chain_size: usize) -> usize {
@@ -839,8 +864,7 @@ mod tests {
         players[0].stocks[3] = 1;
         players[1].stocks[3] = 4;
         players[2].stocks[3] = 3;
-        let mut cash = vec![0; players.len()];
-        pay_bonuses(3, 300, &players, &mut cash);
+        let cash = calculate_bonuses(3, 300, &players);
         assert_eq!(cash[0], 0); // No bonus.
         assert_eq!(cash[1], 3000); // Majority bonus is 3000.
         assert_eq!(cash[2], 1500); // Second place bonus is 1500.
@@ -857,8 +881,7 @@ mod tests {
         players[0].stocks[2] = 7;
         players[1].stocks[3] = 3;
         players[2].stocks[3] = 3;
-        let mut cash = vec![0; players.len()];
-        pay_bonuses(3, 300, &players, &mut cash);
+        let cash = calculate_bonuses(3, 300, &players);
         assert_eq!(cash[0], 0); // No bonus.
         assert_eq!(cash[1], 2300); // Combined bonus: 4500 / 2 => 2300
         assert_eq!(cash[2], 2300); // Combined bonus: 4500 / 2 => 2300
@@ -875,8 +898,7 @@ mod tests {
         players[0].stocks[3] = 1;
         players[1].stocks[3] = 3;
         players[2].stocks[3] = 1;
-        let mut cash = vec![0; players.len()];
-        pay_bonuses(3, 300, &players, &mut cash);
+        let cash = calculate_bonuses(3, 300, &players);
         assert_eq!(cash[0], 800); // Second place: 1500 / 2 => 800
         assert_eq!(cash[1], 3000); // Majority bonus is 3000.
         assert_eq!(cash[2], 800); // Second place: 1500 / 2 => 800
@@ -893,8 +915,7 @@ mod tests {
         players[0].stocks[1] = 0;
         players[1].stocks[3] = 3;
         players[2].stocks[0] = 0;
-        let mut cash = vec![0; players.len()];
-        pay_bonuses(3, 300, &players, &mut cash);
+        let cash = calculate_bonuses(3, 300, &players);
         assert_eq!(cash[0], 0); // No bonus.
         assert_eq!(cash[1], 4500); // Combined bonus: 4500
         assert_eq!(cash[2], 0); // No bonus.

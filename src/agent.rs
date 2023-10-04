@@ -34,6 +34,7 @@ impl Agent for RandomAgent {
                 let chain_idx = choices.choose(&mut rng).unwrap();
                 TurnAction::PickWinningChain(*chain_idx)
             }
+            TurnPhase::DistributeBonuses(_, _, _) => TurnAction::AcceptBonus,
             TurnPhase::ResolveMerger(_winner_idx, loser_inds, player_idx) => {
                 let loser_idx = loser_inds[0];
                 let loser_shares = game.players[*player_idx].stocks[loser_idx];
